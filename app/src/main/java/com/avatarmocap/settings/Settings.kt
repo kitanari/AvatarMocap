@@ -57,7 +57,7 @@ data class AppSettings(
     /** 0 = cada lado independiente, 1 = boca totalmente simétrica. */
     val mouthSymmetry: Float = 0.6f,
     /** Multiplicador de mover la boca/mandíbula a los costados. */
-    val mouthSide: Float = 0.5f,
+    val mouthSide: Float = 1f,
     /** Límite total de apertura de boca (1 = como un iPhone con la boca bien abierta). */
     val mouthLimit: Float = 0.9f,
     /** Lleva tu máximo calibrado al rango que manda un iPhone (evita que la boca se rompa). */
@@ -118,7 +118,7 @@ class SettingsStore(context: Context) {
             gainEmotions = prefs.getFloat("gainEmotions", d.gainEmotions),
             mouthStable = prefs.getBoolean("mouthStable", d.mouthStable),
             mouthSymmetry = prefs.getFloat("mouthSymmetry", d.mouthSymmetry),
-            mouthSide = prefs.getFloat("mouthSide", d.mouthSide),
+            mouthSide = prefs.getFloat("mouthSide2", d.mouthSide),
             mouthLimit = prefs.getFloat("mouthLimit", d.mouthLimit),
             iphoneRanges = prefs.getBoolean("iphoneRanges", d.iphoneRanges),
             quickCalibration = prefs.getBoolean("quickCalibration", d.quickCalibration),
@@ -162,7 +162,7 @@ class SettingsStore(context: Context) {
             .putFloat("gainEmotions", s.gainEmotions)
             .putBoolean("mouthStable", s.mouthStable)
             .putFloat("mouthSymmetry", s.mouthSymmetry)
-            .putFloat("mouthSide", s.mouthSide)
+            .putFloat("mouthSide2", s.mouthSide)
             .putFloat("mouthLimit", s.mouthLimit)
             .putBoolean("iphoneRanges", s.iphoneRanges)
             .putBoolean("quickCalibration", s.quickCalibration)

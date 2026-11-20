@@ -50,6 +50,10 @@ enum class CalibStep(
         "Más tranquila que Alegría: media sonrisa.", emotion = 3),
     SURPRISED("Sorpresa", "Cejas arriba y ojos bien abiertos.", "Sin abrir la boca (o apenas).",
         arrayOf("eyeWideLeft", "eyeWideRight", "browOuterUpLeft", "browOuterUpRight"), emotion = 4),
+    MOUTH_LEFT("Boca a tu izquierda", "Mové la boca (labios juntos) hacia TU IZQUIERDA.",
+        "Solo los labios, sin girar la cabeza.", arrayOf("mouthLeft"), multiAngle = false),
+    MOUTH_RIGHT("Boca a tu derecha", "Mové la boca (labios juntos) hacia TU DERECHA.",
+        "Solo los labios, sin girar la cabeza.", arrayOf("mouthRight"), multiAngle = false),
     PUFF("Cachetes inflados", "Inflá los cachetes con la boca cerrada.", "Como un pez globo, sin mover la boca a los costados.",
         arrayOf("cheekPuff")),
     TONGUE("Lengua afuera", "Sacá la lengua hacia abajo lo más que puedas.",
@@ -101,10 +105,15 @@ class Calibration {
     val earClosed = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var gapMax = Float.NaN
     val puffMax = floatArrayOf(Float.NaN, Float.NaN)
-    @Volatile var tongueF0 = 0.08f
-    @Volatile var tongueF1 = 0.45f
+    @Volatile var tongueF0 = 0.05f
+    @Volatile var tongueF1 = 0.35f
     /** Color aprendido de la lengua (Cr, Cb, Y relativos a la piel) o NaN. */
     val tongueColor = floatArrayOf(Float.NaN, Float.NaN, Float.NaN)
+    /** Color aprendido del labio inferior (en "Neutral") o NaN. */
+    val lipColor = floatArrayOf(Float.NaN, Float.NaN, Float.NaN)
+    /** Cuánto se mueve TU boca a cada lado (unidad de Feat.MOUTH_X). */
+    @Volatile var mouthSpanL = DEFAULT_MOUTH_SPAN
+    @Volatile var mouthSpanR = DEFAULT_MOUTH_SPAN
     val visemeT = Array(5) { FloatArray(ArKit.COUNT) }
     val emotionT = Array(5) { FloatArray(ArKit.COUNT) }
     val hasViseme = BooleanArray(5)
@@ -235,6 +244,13 @@ class Calibration {
                     return false to "Casi no se distingue la lengua. Sacala más, hacia abajo, con luz de frente."
                 }
             }
+            CalibStep.MOUTH_LEFT, CalibStep.MOUTH_RIGHT -> {
+                val dx = d.featMean[Feat.MOUTH_X] - n.featMean[Feat.MOUTH_X]
+                val okDir = if (step == CalibStep.MOUTH_LEFT) dx > 0.015f else dx < -0.015f
+                if (dx.isNaN() || !okDir) {
+                    return false to "No se notó la boca moviéndose a ese lado. Movela más (sin girar la cabeza)."
+                }
+            }
             CalibStep.PUFF -> {
                 val pl = d.featUpper[Feat.PUFF_L] - n.featMean[Feat.PUFF_L]
                 val pr = d.featUpper[Feat.PUFF_R] - n.featMean[Feat.PUFF_R]
@@ -286,9 +302,18 @@ class Calibration {
             hasViseme[k] = steps.keys.any { it.viseme == k }
             hasEmotion[k] = steps.keys.any { it.emotion == k }
         }
-        tongueF0 = steps[CalibStep.A]?.get(Pose.CENTER)?.featMean?.get(Feat.TONGUE) ?: 0.08f
+        tongueF0 = steps[CalibStep.A]?.get(Pose.CENTER)?.featMean?.get(Feat.TONGUE)?.takeIf { !it.isNaN() } ?: 0.05f
         val tb = steps[CalibStep.TONGUE]?.get(Pose.CENTER)
-        tongueF1 = tb?.featUpper?.get(Feat.TONGUE) ?: max(0.45f, tongueF0 + 0.2f)
+        tongueF1 = tb?.featUpper?.get(Feat.TONGUE)?.takeIf { !it.isNaN() } ?: max(0.35f, tongueF0 + 0.2f)
+        val nc = neutralBins?.get(Pose.CENTER)
+        lipColor[0] = nc?.featMean?.get(Feat.LIP_CR) ?: Float.NaN
+        lipColor[1] = nc?.featMean?.get(Feat.LIP_CB) ?: Float.NaN
+        lipColor[2] = nc?.featMean?.get(Feat.LIP_Y) ?: Float.NaN
+        val n0 = nc?.featMean?.get(Feat.MOUTH_X)
+        val ml = steps[CalibStep.MOUTH_LEFT]?.get(Pose.CENTER)?.featMean?.get(Feat.MOUTH_X)
+        val mr = steps[CalibStep.MOUTH_RIGHT]?.get(Pose.CENTER)?.featMean?.get(Feat.MOUTH_X)
+        mouthSpanL = if (n0 != null && ml != null && !ml.isNaN() && !n0.isNaN()) max(ml - n0, 0.01f) else DEFAULT_MOUTH_SPAN
+        mouthSpanR = if (n0 != null && mr != null && !mr.isNaN() && !n0.isNaN()) max(n0 - mr, 0.01f) else DEFAULT_MOUTH_SPAN
         tongueColor[0] = tb?.featMean?.get(Feat.TONGUE_CR) ?: Float.NaN
         tongueColor[1] = tb?.featMean?.get(Feat.TONGUE_CB) ?: Float.NaN
         tongueColor[2] = tb?.featMean?.get(Feat.TONGUE_Y) ?: Float.NaN
@@ -399,6 +424,17 @@ class Calibration {
         return true
     }
 
+    /** Boca a los costados desde la malla: out = (izquierda, derecha) 0..1. */
+    fun mouthSide(feat: FloatArray, out: FloatArray): Boolean {
+        val n = featNeutral[Feat.MOUTH_X]
+        if (n.isNaN() || feat[Feat.MOUTH_X].isNaN()) return false
+        val dx = feat[Feat.MOUTH_X] - n
+        // Pequeña zona muerta (el ruido de la malla) y luego lineal hasta tu máximo
+        out[0] = ((dx - MOUTH_DEAD) / (mouthSpanL - MOUTH_DEAD).coerceAtLeast(0.005f)).coerceIn(0f, 1f)
+        out[1] = ((-dx - MOUTH_DEAD) / (mouthSpanR - MOUTH_DEAD).coerceAtLeast(0.005f)).coerceIn(0f, 1f)
+        return true
+    }
+
     fun puffSignal(feat: FloatArray): Float {
         var sig = 1f
         val idx = intArrayOf(Feat.PUFF_L, Feat.PUFF_R)
@@ -484,6 +520,8 @@ class Calibration {
         private const val AUTO_DECAY = 0.9995f
         private const val AUTO_MIN_RANGE = 0.6f
         private const val DEFAULT_PUFF_SPAN = 0.025f
+        private const val DEFAULT_MOUTH_SPAN = 0.08f
+        private const val MOUTH_DEAD = 0.006f
         private const val IRIS_H_RANGE = 0.18f
         private const val IRIS_V_RANGE = 0.12f
 

@@ -66,6 +66,9 @@ class CameraSource(private val context: Context) {
     // ---- Métricas
     @Volatile var cameraFps = 0f
         private set
+    /** Lo que tarda convertir/rotar cada imagen (hilo de cámara). */
+    @Volatile var convertMs = 0f
+        private set
     private var camFrames = 0
     private var camWindow = 0L
 
@@ -184,6 +187,7 @@ class CameraSource(private val context: Context) {
         matrix.mapRect(rect)
         matrix.postTranslate(-rect.left, -rect.top)
         Canvas(o!!).drawBitmap(s, matrix, null)
+        convertMs = (SystemClock.elapsedRealtimeNanos() - now) / 1e6f
 
         synchronized(lock) {
             latest = idx

@@ -90,17 +90,7 @@ fun MainScreen(vm: TrackingViewModel) {
                     Modifier.fillMaxWidth().height(if (s.showPreview || ui.capture != null) 300.dp else 90.dp)
                         .clip(RoundedCornerShape(16.dp)).background(Color(0xFF111111))
                 ) {
-                    val pf = ui.preview
-                    if (s.showPreview && pf != null) {
-                        // Espejado como una selfie: imagen y malla juntas
-                        Box(Modifier.fillMaxSize().graphicsLayer(scaleX = -1f)) {
-                            Image(
-                                pf.bitmap.asImageBitmap(), null,
-                                Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
-                            )
-                            FaceOverlay(pf, s.meshMode, Modifier.fillMaxSize())
-                        }
-                    }
+                    if (s.showPreview) LivePreview(vm, s.meshMode)
                     StatusOverlay(ui, Modifier.align(Alignment.TopStart).padding(8.dp))
                     if (ui.capture != null) CaptureOverlay(ui, Modifier.align(Alignment.BottomCenter))
                 }
@@ -288,6 +278,18 @@ fun MainScreen(vm: TrackingViewModel) {
     }
 }
 
+/** Solo este bloque se redibuja con cada cuadro: el resto de la pantalla se actualiza ~10 veces/s. */
+@Composable
+private fun LivePreview(vm: TrackingViewModel, meshMode: Int) {
+    val pf by vm.preview.collectAsStateWithLifecycle()
+    val frame = pf ?: return
+    // Espejado como una selfie: imagen y malla juntas
+    Box(Modifier.fillMaxSize().graphicsLayer(scaleX = -1f)) {
+        Image(frame.bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        FaceOverlay(frame, meshMode, Modifier.fillMaxSize())
+    }
+}
+
 /**
  * Malla / puntos / lengua sobre la imagen analizada, en coordenadas de la imagen con el mismo
  * recorte que ContentScale.Crop: coincide exactamente con la foto.
@@ -351,9 +353,10 @@ private fun StatusOverlay(ui: UiState, modifier: Modifier) {
         )
         Text("tracking %.0f fps · cámara %.0f fps".format(ui.fps, ui.cameraFps), fontSize = 12.sp, color = Color.White)
         Text(
-            "MediaPipe %.0f ms · total %.0f ms · %s".format(ui.detectMs, ui.processMs, ui.accel),
+            "MediaPipe %.0f ms · lengua %.0f ms · total %.0f ms".format(ui.detectMs, ui.tongueMs, ui.processMs),
             fontSize = 12.sp, color = Color.White,
         )
+        Text("conversión %.0f ms · %s".format(ui.convertMs, ui.accel), fontSize = 12.sp, color = Color.White)
     }
 }
 

@@ -50,8 +50,8 @@ data class UiState(
     val wizardStep: CalibStep? = null,
     val capture: CaptureStatus? = null,
     val calibratedSteps: Set<CalibStep> = emptySet(),
-    /** Imagen analizada + malla + lengua del mismo cuadro. */
-    val preview: PreviewFrame? = null,
+    val convertMs: Float = 0f,
+    val tongueMs: Float = 0f,
 )
 
 class TrackingViewModel(app: Application) : AndroidViewModel(app) {
@@ -65,11 +65,16 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
 
     private val camera = CameraSource(app)
 
+    /** Vista previa a fps completos, separada del resto del estado (solo se redibuja la imagen). */
+    private val _preview = MutableStateFlow<PreviewFrame?>(null)
+    val preview: StateFlow<PreviewFrame?> = _preview
+
     private val pipeline: TrackingPipeline by lazy {
         TrackingPipeline(app, _settings.value).also { p ->
             p.calibration.fromJson(store.calibrationJson)
             p.calibration.onStepDone = { step, ok, msg -> onStepDone(step, ok, msg) }
             p.listener = ::onFrame
+            p.onPreview = { _preview.value = it }
             rebuildSinks(p, _settings.value)
             _ui.update { it.copy(calibratedSteps = p.calibration.done.toSet()) }
         }
@@ -102,7 +107,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         }
         t?.debug?.let { lastDebug = it.asImageBitmap() }
         // Con los puntos visibles refrescamos a ~20 Hz para que sigan bien a la cara
-        val interval = if (_settings.value.showPreview || p0Capturing()) 50_000_000L else 100_000_000L
+        val interval = if (p0Capturing()) 50_000_000L else 100_000_000L
         if (now - lastUiNanos < interval) return
         lastUiNanos = now
         val p = pipeline
@@ -124,7 +129,8 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             ifmStatus = sinks.firstOrNull { it is IFacialMocapServer }?.status?.value ?: "Desactivado",
             vtsStatus = sinks.firstOrNull { it is VTubeStudioPlugin }?.status?.value ?: "Desactivado",
             capture = p.calibration.captureStatus(now),
-            preview = p.previewFrame,
+            convertMs = camera.convertMs,
+            tongueMs = p.lastTongueMs,
         ) }
     }
 

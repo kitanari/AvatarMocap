@@ -23,7 +23,13 @@ object Feat {
     const val TONGUE_CR = 10
     const val TONGUE_CB = 11
     const val TONGUE_Y = 12
-    const val COUNT = 13
+    // Color de los labios (relativo a la piel)
+    const val LIP_CR = 13
+    const val LIP_CB = 14
+    const val LIP_Y = 15
+    /** Desplazamiento lateral de la boca respecto de la nariz (+ = hacia la izquierda del usuario). */
+    const val MOUTH_X = 16
+    const val COUNT = 17
 }
 
 object FaceFeatures {
@@ -48,6 +54,17 @@ object FaceFeatures {
         out[Feat.EAR_L] = (d(387, 373) + d(386, 374) + d(385, 380)) / (3f * d(263, 362).coerceAtLeast(1e-3f))
 
         out[Feat.GAP] = d(13, 14) / d(33, 263).coerceAtLeast(1e-3f)
+
+        // Boca hacia los costados: centro de la boca proyectado sobre el eje de los ojos, respecto
+        // del punto bajo la nariz (2). En 3D para que girar la cabeza afecte poco.
+        val ax = (p[263 * 3] - p[33 * 3]) * w
+        val ay = (p[263 * 3 + 1] - p[33 * 3 + 1]) * h
+        val az = (p[263 * 3 + 2] - p[33 * 3 + 2]) * w
+        val alen2 = (ax * ax + ay * ay + az * az).coerceAtLeast(1e-3f)
+        val mx = ((p[61 * 3] + p[291 * 3]) / 2f - p[2 * 3]) * w
+        val my = ((p[61 * 3 + 1] + p[291 * 3 + 1]) / 2f - p[2 * 3 + 1]) * h
+        val mz = ((p[61 * 3 + 2] + p[291 * 3 + 2]) / 2f - p[2 * 3 + 2]) * w
+        out[Feat.MOUTH_X] = (mx * ax + my * ay + mz * az) / alen2
 
         if (n >= 478) {
             iris(p, w, h, 473, 362, 263, out, Feat.IRIS_HL, Feat.IRIS_VL)

@@ -48,7 +48,12 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     /** Último cuadro para la vista previa: la imagen ANALIZADA + su malla + la lengua (siempre alineadas). */
     @Volatile var previewFrame: PreviewFrame? = null
         private set
-    private val previewPool = arrayOfNulls<Bitmap>(3)
+    /** Se llama con cada cuadro de vista previa (hilo de tracking). */
+    var onPreview: ((PreviewFrame) -> Unit)? = null
+    @Volatile var lastTongueMs = 0f
+        private set
+    private var lastGood: FaceFrame? = null
+    private val previewPool = arrayOfNulls<Bitmap>(4)
     private var previewIdx = 0
     private var lastPreviewNanos = 0L
 
@@ -80,10 +85,16 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         lastDetectMs = detectMs
         val landmarks = result?.faceLandmarks()?.firstOrNull()
         if (result == null || landmarks == null) {
-            if (++lostFrames == 10) resetFilters()
-            smoother.reset()
+            lostFrames++
             publishPreview(bitmap, null, null, t0)
-            emit(FaceFrame.lost(t0), null)
+            val held = lastGood
+            if (lostFrames <= HOLD_FRAMES && held != null) {
+                // Pérdida breve (parpadeo de detección, mano delante): se mantiene la última pose
+                emit(held, null)
+            } else {
+                if (lostFrames == HOLD_FRAMES + 1) { resetFilters(); smoother.reset() }
+                emit(FaceFrame.lost(t0), null)
+            }
             lastProcessMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6f
             return
         }
@@ -106,13 +117,17 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         FaceFeatures.compute(pts, n, w, h, feat)
         tongue.f0 = calibration.tongueF0
         tongue.f1 = calibration.tongueF1
-        val tc = calibration.tongueColor
-        tongue.setPrototype(tc[0], tc[1], tc[2])
+        tongue.setPrototypes(calibration.tongueColor, calibration.lipColor)
+        val tt0 = SystemClock.elapsedRealtimeNanos()
         val t = tongue.process(bitmap, pts, n, s.showTongueDebug)
+        lastTongueMs = (SystemClock.elapsedRealtimeNanos() - tt0) / 1e6f
         feat[Feat.TONGUE] = t.feature
-        feat[Feat.TONGUE_CR] = t.colorCr
-        feat[Feat.TONGUE_CB] = t.colorCb
-        feat[Feat.TONGUE_Y] = t.colorY
+        feat[Feat.TONGUE_CR] = t.tongueCr
+        feat[Feat.TONGUE_CB] = t.tongueCb
+        feat[Feat.TONGUE_Y] = t.tongueY
+        feat[Feat.LIP_CR] = t.lipCr
+        feat[Feat.LIP_CB] = t.lipCb
+        feat[Feat.LIP_Y] = t.lipY
         raw[ArKit.TONGUE_OUT] = t.value
         if (s.showPreview) publishPreview(bitmap, if (s.meshMode > 0) pts else null, t.hull, t0)
 
@@ -197,15 +212,15 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             ex * (blend[ArKit.LOOK_IN_R] - blend[ArKit.LOOK_OUT_R]) * EYE_YAW_DEG,
         )
 
-        emit(
+        val frame =
             FaceFrame(
                 timestampNanos = t0, faceFound = true, blend = blend,
                 headRot = floatArrayOf(pitch, yaw, roll),
                 headPos = floatArrayOf(hf[3] / 100f, hf[4] / 100f, hf[5] / 100f),
                 leftEye = leftEye, rightEye = rightEye, tongueX = tdx, tongueY = tdy, vrm = vrm,
-            ),
-            t,
-        )
+            )
+        lastGood = frame
+        emit(frame, t)
         lastProcessMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6f
     }
 
@@ -222,6 +237,12 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         }
         val jg = calibration.jawGeo(feat[Feat.GAP])
         if (!jg.isNaN()) cal[ArKit.JAW_OPEN] = 0.5f * cal[ArKit.JAW_OPEN] + 0.5f * jg
+
+        // Boca a los costados: medida directa sobre la malla (MediaPipe casi no la detecta)
+        if (calibration.mouthSide(feat, gz)) {
+            cal[ArKit.MOUTH_LEFT] = max(cal[ArKit.MOUTH_LEFT] * 0.5f, gz[0])
+            cal[ArKit.MOUTH_RIGHT] = max(cal[ArKit.MOUTH_RIGHT] * 0.5f, gz[1])
+        }
 
         // Mirada desde el iris (se congela mientras el ojo está cerrado: el iris no se ve)
         for (k in 0..1) {
@@ -282,7 +303,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
 
     /** Copia el cuadro analizado (máx. ~20 por segundo) junto con SU malla, para que siempre coincidan. */
     private fun publishPreview(src: Bitmap, pts: FloatArray?, hull: FloatArray?, nanos: Long) {
-        if (!settings.showPreview || nanos - lastPreviewNanos < 50_000_000L) return
+        if (!settings.showPreview) return
         lastPreviewNanos = nanos
         previewIdx = (previewIdx + 1) % previewPool.size
         var dst = previewPool[previewIdx]
@@ -295,7 +316,9 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             val n = p.size / 3
             FloatArray(n * 2) { i -> p[(i / 2) * 3 + (i % 2)] }
         }
-        previewFrame = PreviewFrame(dst, xy, hull, ++previewSeq)
+        val pf = PreviewFrame(dst, xy, hull, ++previewSeq)
+        previewFrame = pf
+        onPreview?.invoke(pf)
     }
 
     private var previewSeq = 0L
@@ -329,6 +352,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         const val EYE_YAW_DEG = 30f
         const val EYE_PITCH_DEG = 25f
         private const val BENCH_SKIP = 10
+        private const val HOLD_FRAMES = 12
         private const val BENCH_FRAMES = 40
         private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
         private fun gateDown(v: Float, start: Float, slope: Float) = (1f - max(0f, v - start) * slope).coerceIn(0f, 1f)

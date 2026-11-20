@@ -99,7 +99,7 @@ object ArKit {
 
     /** Blendshapes de boca que MediaPipe estima con mucho ruido: llevan zona muerta en modo estable. */
     val NOISY_MOUTH: IntArray = arrayOf(
-        "mouthLeft", "mouthRight", "jawLeft", "jawRight", "jawForward",
+        "jawLeft", "jawRight", "jawForward",
         "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
         "mouthPressLeft", "mouthPressRight", "mouthStretchLeft", "mouthStretchRight",
         "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft", "mouthFrownRight",
