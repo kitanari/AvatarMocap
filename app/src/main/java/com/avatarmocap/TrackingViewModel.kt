@@ -12,6 +12,7 @@ import com.avatarmocap.camera.CameraSource
 import com.avatarmocap.output.IFacialMocapServer
 import com.avatarmocap.output.NetUtils
 import com.avatarmocap.output.VTubeStudioPlugin
+import com.avatarmocap.output.VmcSender
 import com.avatarmocap.settings.AppSettings
 import com.avatarmocap.settings.SettingsStore
 import com.avatarmocap.tracking.ArKit
@@ -29,7 +30,11 @@ data class UiState(
     val faceFound: Boolean = false,
     val fps: Float = 0f,
     val processMs: Float = 0f,
-    val gpu: Boolean = false,
+    val cameraFps: Float = 0f,
+    val detectMs: Float = 0f,
+    val accel: String = "",
+    val vrm: FloatArray = FloatArray(com.avatarmocap.tracking.Vrm.COUNT),
+    val vmcStatus: String = "",
     val blend: FloatArray = FloatArray(ArKit.COUNT),
     val headRot: FloatArray = FloatArray(3),
     val tongueValue: Float = 0f,
@@ -96,7 +101,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         }
         t?.debug?.let { lastDebug = it.asImageBitmap() }
         // Con los puntos visibles refrescamos a ~20 Hz para que sigan bien a la cara
-        val interval = if (_settings.value.showLandmarks) 50_000_000L else 100_000_000L
+        val interval = if (_settings.value.meshMode > 0) 50_000_000L else 100_000_000L
         if (now - lastUiNanos < interval) return
         lastUiNanos = now
         val p = pipeline
@@ -105,7 +110,11 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             faceFound = frame.faceFound,
             fps = fps,
             processMs = p.lastProcessMs,
-            gpu = p.usingGpu,
+            cameraFps = camera.cameraFps,
+            detectMs = p.lastDetectMs,
+            accel = p.accelLabel,
+            vrm = frame.vrm.copyOf(),
+            vmcStatus = sinks.firstOrNull { it is VmcSender }?.status?.value ?: "Desactivado",
             blend = frame.blend.copyOf(),
             headRot = frame.headRot.copyOf(),
             tongueValue = frame.blend[ArKit.TONGUE_OUT],
@@ -134,9 +143,11 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         store.save(new)
         pipeline.settings = new
         val netChanged = old.ifmEnabled != new.ifmEnabled || old.ifmTargetIp != new.ifmTargetIp ||
-            old.vtsEnabled != new.vtsEnabled || old.vtsHost != new.vtsHost || old.vtsPort != new.vtsPort
+            old.vtsEnabled != new.vtsEnabled || old.vtsHost != new.vtsHost || old.vtsPort != new.vtsPort ||
+            old.vmcEnabled != new.vmcEnabled || old.vmcHost != new.vmcHost || old.vmcPort != new.vmcPort ||
+            old.vmcVrm1 != new.vmcVrm1 || old.vmcArkit != new.vmcArkit || old.vmcBones != new.vmcBones
         if (netChanged) viewModelScope.launch(Dispatchers.IO) { rebuildSinks(pipeline, new) }
-        if (old.useGpu != new.useGpu) message("El cambio de GPU/CPU se aplica al reiniciar la app")
+        if (old.accel != new.accel) message("El cambio de GPU/CPU se aplica al reiniciar la app")
     }
 
     @Synchronized
@@ -144,7 +155,11 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         val old = p.sinks.toList()
         p.sinks.clear()
         old.forEach { it.close() }
-        if (s.ifmEnabled) p.sinks.add(IFacialMocapServer(s.ifmTargetIp))
+        val ifm = if (s.ifmEnabled) IFacialMocapServer(s.ifmTargetIp) else null
+        if (ifm != null) p.sinks.add(ifm)
+        if (s.vmcEnabled) {
+            p.sinks.add(VmcSender(s.vmcHost, s.vmcPort, s.vmcVrm1, s.vmcArkit, s.vmcBones) { ifm?.currentTarget })
+        }
         if (s.vtsEnabled && s.vtsHost.isNotBlank()) {
             p.sinks.add(VTubeStudioPlugin(s.vtsHost.trim(), s.vtsPort, store.vtsToken) { store.vtsToken = it })
         }

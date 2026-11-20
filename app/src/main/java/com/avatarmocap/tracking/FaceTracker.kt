@@ -12,31 +12,16 @@ import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 import java.io.Closeable
 
 /**
- * Envoltorio de MediaPipe Face Landmarker en modo VIDEO (síncrono): así el resultado y el
- * bitmap del mismo cuadro están disponibles juntos (el detector de lengua necesita ambos).
+ * MediaPipe Face Landmarker en modo VIDEO (síncrono, con seguimiento entre cuadros: solo corre
+ * el detector de caras cuando pierde la cara, el resto del tiempo solo la malla).
+ * Lanza excepción si el [gpu] pedido no está disponible.
  */
-class FaceTracker(context: Context, preferGpu: Boolean) : Closeable {
+class FaceTracker(context: Context, val gpu: Boolean) : Closeable {
 
-    private val landmarker: FaceLandmarker
-    val usingGpu: Boolean
-
-    init {
-        var gpu = preferGpu
-        val lm = try {
-            create(context, if (gpu) Delegate.GPU else Delegate.CPU)
-        } catch (e: Exception) {
-            Log.w(TAG, "GPU no disponible, usando CPU", e)
-            gpu = false
-            create(context, Delegate.CPU)
-        }
-        landmarker = lm
-        usingGpu = gpu
-    }
-
-    private fun create(context: Context, delegate: Delegate): FaceLandmarker {
+    private val landmarker: FaceLandmarker = run {
         val base = BaseOptions.builder()
             .setModelAssetPath(MODEL)
-            .setDelegate(delegate)
+            .setDelegate(if (gpu) Delegate.GPU else Delegate.CPU)
             .build()
         val options = FaceLandmarker.FaceLandmarkerOptions.builder()
             .setBaseOptions(base)
@@ -48,7 +33,7 @@ class FaceTracker(context: Context, preferGpu: Boolean) : Closeable {
             .setOutputFaceBlendshapes(true)
             .setOutputFacialTransformationMatrixes(true)
             .build()
-        return FaceLandmarker.createFromOptions(context, options)
+        FaceLandmarker.createFromOptions(context, options)
     }
 
     /** [timestampMs] debe ser estrictamente creciente. */
@@ -65,5 +50,15 @@ class FaceTracker(context: Context, preferGpu: Boolean) : Closeable {
     companion object {
         private const val TAG = "FaceTracker"
         const val MODEL = "face_landmarker.task"
+
+        /** Crea con el delegado pedido y, si falla, con CPU. */
+        fun createWithFallback(context: Context, preferGpu: Boolean): FaceTracker =
+            if (!preferGpu) FaceTracker(context, false)
+            else try {
+                FaceTracker(context, true)
+            } catch (e: Throwable) {
+                Log.w(TAG, "GPU no disponible, usando CPU", e)
+                FaceTracker(context, false)
+            }
     }
 }

@@ -34,6 +34,8 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
     override val status: StateFlow<String> = _status
 
     @Volatile private var target: InetAddress? = null
+    /** PC conectada (por handshake o IP fija), o null. */
+    val currentTarget: InetAddress? get() = target
     @Volatile private var v2 = false
     @Volatile private var running = true
     private var socket: DatagramSocket? = null

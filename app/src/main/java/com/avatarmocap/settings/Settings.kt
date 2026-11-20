@@ -14,8 +14,21 @@ data class AppSettings(
     val vtsHost: String = "",
     val vtsPort: Int = 8001,
 
+    // Salida VMC (expresiones VRM para VSeeFace, VNyan, Warudo...)
+    val vmcEnabled: Boolean = false,
+    /** Vacío = la misma PC que se conectó por iFacialMocap. */
+    val vmcHost: String = "",
+    val vmcPort: Int = 39539,
+    /** false = nombres VRM 0.x (A, Blink, Joy...), true = VRM 1.0 (aa, blink, happy...). */
+    val vmcVrm1: Boolean = false,
+    /** Enviar también los 52 ARKit (modelos "perfect sync"). */
+    val vmcArkit: Boolean = false,
+    /** Enviar rotación de cabeza y ojos como huesos. */
+    val vmcBones: Boolean = false,
+
     // Rendimiento
-    val useGpu: Boolean = true,
+    /** 0 = automático (prueba GPU y CPU), 1 = GPU, 2 = CPU. */
+    val accel: Int = 0,
     /** 0 = baja (320x240), 1 = media (480x360), 2 = alta (640x480). */
     val resolution: Int = 1,
     val showPreview: Boolean = true,
@@ -32,7 +45,11 @@ data class AppSettings(
     val smoothing: Float = 0.4f,
     val autoRange: Boolean = false,
     val showTongueDebug: Boolean = false,
-    val showLandmarks: Boolean = true,
+    /** 0 = nada, 1 = puntos, 2 = malla completa. */
+    val meshMode: Int = 2,
+    /** Fusiona parpadeo/boca/mirada medidos en la malla con MediaPipe. */
+    val precise: Boolean = true,
+    val gainEmotions: Float = 1f,
 
     // Boca
     /** Zona muerta en los blendshapes de boca ruidosos. */
@@ -71,7 +88,13 @@ class SettingsStore(context: Context) {
             vtsEnabled = prefs.getBoolean("vtsEnabled", d.vtsEnabled),
             vtsHost = prefs.getString("vtsHost", d.vtsHost) ?: "",
             vtsPort = prefs.getInt("vtsPort", d.vtsPort),
-            useGpu = prefs.getBoolean("useGpu", d.useGpu),
+            vmcEnabled = prefs.getBoolean("vmcEnabled", d.vmcEnabled),
+            vmcHost = prefs.getString("vmcHost", d.vmcHost) ?: "",
+            vmcPort = prefs.getInt("vmcPort", d.vmcPort),
+            vmcVrm1 = prefs.getBoolean("vmcVrm1", d.vmcVrm1),
+            vmcArkit = prefs.getBoolean("vmcArkit", d.vmcArkit),
+            vmcBones = prefs.getBoolean("vmcBones", d.vmcBones),
+            accel = prefs.getInt("accel", d.accel),
             resolution = prefs.getInt("resolution", d.resolution),
             showPreview = prefs.getBoolean("showPreview", d.showPreview),
             showBlendshapes = prefs.getBoolean("showBlendshapes", d.showBlendshapes),
@@ -84,7 +107,9 @@ class SettingsStore(context: Context) {
             smoothing = prefs.getFloat("smoothing", d.smoothing),
             autoRange = prefs.getBoolean("autoRange2", d.autoRange),
             showTongueDebug = prefs.getBoolean("showTongueDebug2", d.showTongueDebug),
-            showLandmarks = prefs.getBoolean("showLandmarks", d.showLandmarks),
+            meshMode = prefs.getInt("meshMode", d.meshMode),
+            precise = prefs.getBoolean("precise", d.precise),
+            gainEmotions = prefs.getFloat("gainEmotions", d.gainEmotions),
             mouthStable = prefs.getBoolean("mouthStable", d.mouthStable),
             mouthSymmetry = prefs.getFloat("mouthSymmetry", d.mouthSymmetry),
             mouthSide = prefs.getFloat("mouthSide", d.mouthSide),
@@ -104,7 +129,13 @@ class SettingsStore(context: Context) {
             .putBoolean("vtsEnabled", s.vtsEnabled)
             .putString("vtsHost", s.vtsHost)
             .putInt("vtsPort", s.vtsPort)
-            .putBoolean("useGpu", s.useGpu)
+            .putBoolean("vmcEnabled", s.vmcEnabled)
+            .putString("vmcHost", s.vmcHost)
+            .putInt("vmcPort", s.vmcPort)
+            .putBoolean("vmcVrm1", s.vmcVrm1)
+            .putBoolean("vmcArkit", s.vmcArkit)
+            .putBoolean("vmcBones", s.vmcBones)
+            .putInt("accel", s.accel)
             .putInt("resolution", s.resolution)
             .putBoolean("showPreview", s.showPreview)
             .putBoolean("showBlendshapes", s.showBlendshapes)
@@ -117,7 +148,9 @@ class SettingsStore(context: Context) {
             .putFloat("smoothing", s.smoothing)
             .putBoolean("autoRange2", s.autoRange)
             .putBoolean("showTongueDebug2", s.showTongueDebug)
-            .putBoolean("showLandmarks", s.showLandmarks)
+            .putInt("meshMode", s.meshMode)
+            .putBoolean("precise", s.precise)
+            .putFloat("gainEmotions", s.gainEmotions)
             .putBoolean("mouthStable", s.mouthStable)
             .putFloat("mouthSymmetry", s.mouthSymmetry)
             .putFloat("mouthSide", s.mouthSide)
@@ -131,8 +164,8 @@ class SettingsStore(context: Context) {
     }
 
     var calibrationJson: String
-        get() = prefs.getString("calibration_v2", "") ?: ""
-        set(v) = prefs.edit().putString("calibration_v2", v).apply()
+        get() = prefs.getString("calibration_v3", "") ?: ""
+        set(v) = prefs.edit().putString("calibration_v3", v).apply()
 
     var vtsToken: String
         get() = prefs.getString("vtsToken", "") ?: ""

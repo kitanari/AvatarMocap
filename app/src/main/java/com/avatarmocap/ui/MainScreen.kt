@@ -62,6 +62,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import com.avatarmocap.tracking.Vrm
 import kotlin.math.max
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -90,13 +93,13 @@ fun MainScreen(vm: TrackingViewModel) {
         // ---------- Vista previa + estado
         item {
             Column {
-                val tall = s.showPreview || s.showLandmarks
+                val tall = s.showPreview || s.meshMode > 0
                 Box(
                     Modifier.fillMaxWidth().height(if (tall) 280.dp else 90.dp)
                         .clip(RoundedCornerShape(16.dp)).background(Color(0xFF1A1A1A))
                 ) {
                     if (s.showPreview) AndroidView({ previewView }, Modifier.fillMaxWidth().height(280.dp))
-                    if (s.showLandmarks) LandmarkOverlay(ui, Modifier.fillMaxWidth().height(280.dp))
+                    if (s.meshMode > 0) LandmarkOverlay(ui, s.meshMode, Modifier.fillMaxWidth().height(280.dp))
                     StatusOverlay(ui, Modifier.align(Alignment.TopStart).padding(8.dp))
                 }
                 if (ui.message.isNotEmpty()) {
@@ -133,6 +136,10 @@ fun MainScreen(vm: TrackingViewModel) {
                 GainSlider("Sonrisa", s.gainSmile) { v -> vm.update { it.copy(gainSmile = v) } }
                 GainSlider("Cachetes inflados", s.gainCheeks) { v -> vm.update { it.copy(gainCheeks = v) } }
                 GainSlider("Lengua", s.gainTongue) { v -> vm.update { it.copy(gainTongue = v) } }
+                GainSlider("Emociones VRM (Joy, Angry…)", s.gainEmotions) { v -> vm.update { it.copy(gainEmotions = v) } }
+                ToggleRow("Precisión mejorada (parpadeo, boca y mirada desde la malla)", s.precise) { v ->
+                    vm.update { it.copy(precise = v) }
+                }
                 Text("Suavizado: %.0f%%".format(s.smoothing * 100), fontSize = 13.sp)
                 Slider(s.smoothing, { v -> vm.update { it.copy(smoothing = v) } })
                 ToggleRow("Auto-rango para gestos sin calibrar", s.autoRange) { v -> vm.update { it.copy(autoRange = v) } }
@@ -176,12 +183,54 @@ fun MainScreen(vm: TrackingViewModel) {
                     }
                 }
                 ToggleRow("Mostrar cámara (apagarla da más fps)", s.showPreview) { v -> vm.update { it.copy(showPreview = v) } }
-                ToggleRow("Mostrar puntos de la cara", s.showLandmarks) { v -> vm.update { it.copy(showLandmarks = v) } }
-                ToggleRow("Usar GPU (requiere reiniciar la app)", s.useGpu) { v -> vm.update { it.copy(useGpu = v) } }
+                Text("Sobre la cara", fontSize = 13.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Nada", "Puntos", "Malla").forEachIndexed { i, label ->
+                        FilterChip(s.meshMode == i, { vm.update { it.copy(meshMode = i) } }, { Text(label) })
+                    }
+                }
+                Text("Procesador (se aplica al reiniciar la app)", fontSize = 13.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Automático", "GPU", "CPU").forEachIndexed { i, label ->
+                        FilterChip(s.accel == i, { vm.update { it.copy(accel = i) } }, { Text(label) })
+                    }
+                }
                 Text(
-                    "Si con GPU va lento, probá desactivarla: en algunos teléfonos la CPU es más rápida.",
+                    "Automático mide GPU y CPU con tu cara durante los primeros segundos y se queda con el más rápido.",
                     fontSize = 12.sp,
                 )
+            }
+        }
+
+        // ---------- Expresiones VRM en vivo
+        item {
+            Section("Expresiones VRM") {
+                for (i in 0 until Vrm.COUNT) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(Vrm.LABELS[i], Modifier.width(110.dp), fontSize = 12.sp)
+                        LinearProgressIndicator(progress = { ui.vrm[i] }, modifier = Modifier.weight(1f).height(8.dp))
+                    }
+                }
+            }
+        }
+
+        // ---------- VMC
+        item {
+            Section("Salida VMC (expresiones VRM)") {
+                ToggleRow("Activada", s.vmcEnabled) { v -> vm.update { it.copy(vmcEnabled = v) } }
+                Text(
+                    "Envía A, I, U, E, O, parpadeo y emociones calibradas a los clips del modelo VRM. " +
+                        "En VSeeFace: Configuración general → receptor del protocolo VMC, puerto 39539.",
+                    fontSize = 12.sp,
+                )
+                EditableField("IP de la PC (vacío = la de iFacialMocap)", s.vmcHost) { v -> vm.update { it.copy(vmcHost = v) } }
+                EditableField("Puerto", s.vmcPort.toString(), numeric = true) { v ->
+                    v.toIntOrNull()?.let { p -> vm.update { it.copy(vmcPort = p) } }
+                }
+                ToggleRow("Nombres VRM 1.0 (aa, blink, happy…)", s.vmcVrm1) { v -> vm.update { it.copy(vmcVrm1 = v) } }
+                ToggleRow("Enviar también ARKit (modelos perfect sync)", s.vmcArkit) { v -> vm.update { it.copy(vmcArkit = v) } }
+                ToggleRow("Enviar cabeza y ojos (huesos)", s.vmcBones) { v -> vm.update { it.copy(vmcBones = v) } }
+                StatusText(ui.vmcStatus)
             }
         }
 
@@ -246,26 +295,39 @@ fun MainScreen(vm: TrackingViewModel) {
  * está espejada y recortada al centro (FILL_CENTER), así que se aplica lo mismo a los puntos.
  */
 @Composable
-private fun LandmarkOverlay(ui: UiState, modifier: Modifier) {
+private fun LandmarkOverlay(ui: UiState, mode: Int, modifier: Modifier) {
     val pts = ui.landmarks ?: return
     if (ui.imgW <= 0 || ui.imgH <= 0) return
-    val lipStart = FaceGeometry.OVERLAY_POINTS.size * 2
+    val n = pts.size / 2
     Canvas(modifier) {
         val scale = max(size.width / ui.imgW, size.height / ui.imgH)
         val dw = ui.imgW * scale
         val dh = ui.imgH * scale
         val ox = (size.width - dw) / 2f
         val oy = (size.height - dh) / 2f
-        val face = ArrayList<Offset>(lipStart / 2)
-        val lips = ArrayList<Offset>((pts.size - lipStart) / 2)
-        var i = 0
-        while (i < pts.size) {
-            val o = Offset(ox + (1f - pts[i]) * dw, oy + pts[i + 1] * dh)
-            if (i < lipStart) face.add(o) else lips.add(o)
-            i += 2
+        fun px(i: Int) = ox + (1f - pts[i * 2]) * dw
+        fun py(i: Int) = oy + pts[i * 2 + 1] * dh
+
+        if (mode == 2) {
+            val edges = FaceGeometry.MESH_EDGES
+            val path = Path()
+            var e = 0
+            while (e + 1 < edges.size) {
+                val a = edges[e]; val b = edges[e + 1]
+                if (a < n && b < n) { path.moveTo(px(a), py(a)); path.lineTo(px(b), py(b)) }
+                e += 2
+            }
+            drawPath(path, Color(0x804DD0E1), style = Stroke(width = 1.2f))
+        } else {
+            val face = FaceGeometry.OVERLAY_POINTS.filter { it < n }.map { Offset(px(it), py(it)) }
+            drawPoints(face, PointMode.Points, Color(0xFF4DD0E1), strokeWidth = 6f, cap = StrokeCap.Round)
         }
-        drawPoints(face, PointMode.Points, Color(0xFF4DD0E1), strokeWidth = 6f, cap = StrokeCap.Round)
-        drawPoints(lips, PointMode.Points, Color(0xFFFF6699), strokeWidth = 6f, cap = StrokeCap.Round)
+        val lips = FaceGeometry.OVERLAY_LIPS.filter { it < n }.map { Offset(px(it), py(it)) }
+        drawPoints(lips, PointMode.Points, Color(0xFFFF6699), strokeWidth = 5f, cap = StrokeCap.Round)
+        // Iris
+        if (n >= 478) {
+            for (c in intArrayOf(468, 473)) drawCircle(Color(0xFFFFEB3B), radius = 4f, center = Offset(px(c), py(c)))
+        }
     }
 }
 
@@ -277,7 +339,11 @@ private fun StatusOverlay(ui: UiState, modifier: Modifier) {
             color = if (ui.faceFound) Color(0xFF66FF99) else Color(0xFFFF6666),
         )
         Text(
-            "%.0f fps · %.0f ms · %s".format(ui.fps, ui.processMs, if (ui.gpu) "GPU" else "CPU"),
+            "tracking %.0f fps · cámara %.0f fps".format(ui.fps, ui.cameraFps),
+            fontSize = 12.sp, color = Color.White,
+        )
+        Text(
+            "MediaPipe %.0f ms · total %.0f ms · %s".format(ui.detectMs, ui.processMs, ui.accel),
             fontSize = 12.sp, color = Color.White,
         )
         Text(
@@ -301,7 +367,8 @@ private fun CalibrationCard(ui: UiState, vm: TrackingViewModel) {
             if (step == null) {
                 val n = ui.calibratedSteps.size
                 Text(
-                    if (n == 0) "Sin calibrar. Hacelo una vez: tarda menos de un minuto y adapta todo a tu cara."
+                    if (n == 0) "Sin calibrar. Son las expresiones básicas de un modelo VRM (neutral, parpadeo, A I U E O, " +
+                        "alegría, enojo, tristeza, diversión y sorpresa) + cachetes y lengua. Unos 2 minutos."
                     else "$n de ${CalibStep.entries.size} pasos calibrados. Tocá un paso para repetirlo.",
                     fontSize = 13.sp,
                 )

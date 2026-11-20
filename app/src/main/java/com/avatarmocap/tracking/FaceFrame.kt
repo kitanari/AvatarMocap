@@ -20,6 +20,8 @@ class FaceFrame(
     val rightEye: FloatArray,
     val tongueX: Float,
     val tongueY: Float,
+    /** Expresiones VRM (ver [Vrm]). */
+    val vrm: FloatArray = FloatArray(Vrm.COUNT),
 ) {
     operator fun get(i: Int): Float = blend[i]
 

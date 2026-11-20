@@ -3,49 +3,65 @@ package com.avatarmocap.tracking
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.util.Log
 import com.avatarmocap.output.OutputSink
 import com.avatarmocap.settings.AppSettings
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import java.io.Closeable
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.max
 
 /**
- * cámara (Bitmap) -> MediaPipe -> lengua + cachetes -> calibración -> filtros -> FaceFrame -> salidas
+ * cámara -> MediaPipe -> medidas de la malla (ojos, boca, iris, cachetes, lengua)
+ *        -> calibración -> fusión -> boca estable -> filtros -> ARKit + VRM -> salidas
  *
- * Se ejecuta completo en el hilo de análisis de la cámara, sin crear objetos grandes por cuadro.
+ * Corre en el hilo de tracking (ver CameraSource), sin objetos grandes por cuadro.
  */
 class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
+
+    private val appContext = context.applicationContext
 
     @Volatile var settings: AppSettings = initial
         set(value) { field = value; gains = value.gains() }
     @Volatile private var gains: FloatArray = initial.gains()
 
-    private val tracker = FaceTracker(context.applicationContext, initial.useGpu)
-    val usingGpu get() = tracker.usingGpu
+    // ---- MediaPipe + elección automática GPU/CPU
+    private var tracker: FaceTracker = FaceTracker.createWithFallback(appContext, initial.accel != ACCEL_CPU)
+    private var benchPhase = if (initial.accel == ACCEL_AUTO && tracker.gpu) 1 else 0
+    private var benchSum = 0f
+    private var benchN = 0
+    private var gpuMs = 0f
+    private var other: FaceTracker? = null
+    @Volatile var accelLabel: String = if (benchPhase == 1) "probando GPU…" else if (tracker.gpu) "GPU" else "CPU"
+        private set
 
     val tongue = TongueDetector()
     val calibration = Calibration()
     val sinks = CopyOnWriteArrayList<OutputSink>()
 
-    /** Se llama en cada cuadro (en el hilo de la cámara). */
     var listener: ((FaceFrame, TongueDetector.Result?) -> Unit)? = null
 
-    /** Tiempo de procesamiento del último cuadro (ms), para mostrar en la UI. */
     @Volatile var lastProcessMs = 0f
         private set
+    @Volatile var lastDetectMs = 0f
+        private set
 
-    /** Puntos de la cara para dibujar (x,y normalizados), o null si está apagado. */
+    /** Todos los puntos (x,y normalizados) para dibujar, o null. */
     @Volatile var landmarkSnapshot: FloatArray? = null
         private set
-    @Volatile var imageSize: Long = 0L // (w shl 32) or h
+    @Volatile var imageSize: Long = 0L
         private set
 
-    private val puffSides = FloatArray(2)
+    private val feat = FloatArray(Feat.COUNT)
     private val raw = FloatArray(ArKit.COUNT)
     private val cal = FloatArray(ArKit.COUNT)
     private val headRel = FloatArray(6)
+    private val gz = FloatArray(2)
+    private val lastGaze = FloatArray(4)
+    private val vrmRaw = FloatArray(Vrm.COUNT)
     private val blendFilters = Array(ArKit.COUNT) { OneEuroFilter() }
     private val headFilters = Array(6) { OneEuroFilter() }
+    private val vrmFilters = Array(Vrm.COUNT) { OneEuroFilter() }
     private val tongueDirFilters = Array(2) { OneEuroFilter(minCutoff = 2f) }
     private var lastTs = 0L
     private var lostFrames = 0
@@ -58,6 +74,8 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         lastTs = ts
 
         val result = tracker.detect(bitmap, ts)
+        val detectMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6f
+        lastDetectMs = detectMs
         val landmarks = result?.faceLandmarks()?.firstOrNull()
         if (result == null || landmarks == null) {
             if (++lostFrames == 10) resetFilters()
@@ -67,6 +85,11 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             return
         }
         lostFrames = 0
+        benchmark(detectMs)
+
+        val w = bitmap.width
+        val h = bitmap.height
+        if (s.meshMode > 0) snapshot(landmarks, w, h)
 
         // 1) Blendshapes de MediaPipe -> orden ARKit
         raw.fill(0f)
@@ -74,51 +97,40 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             ArKit.INDEX[c.categoryName()]?.let { raw[it] = c.score() }
         }
 
-        // 2) Lengua y cachetes (detectores propios)
+        // 2) Medidas propias sobre la malla + lengua
+        FaceFeatures.compute(landmarks, w, h, feat)
         tongue.f0 = calibration.tongueF0
         tongue.f1 = calibration.tongueF1
         val t = tongue.process(bitmap, landmarks, s.showTongueDebug)
+        feat[Feat.TONGUE] = t.feature
         raw[ArKit.TONGUE_OUT] = t.value
-        FaceGeometry.puffSides(landmarks, bitmap.width, bitmap.height, puffSides)
-        if (s.showLandmarks) {
-            val pts = FloatArray((FaceGeometry.OVERLAY_POINTS.size + FaceGeometry.OVERLAY_LIPS.size) * 2)
-            var k = 0
-            for (idx in FaceGeometry.OVERLAY_POINTS) {
-                if (idx < landmarks.size) { pts[k] = landmarks[idx].x(); pts[k + 1] = landmarks[idx].y() }
-                k += 2
-            }
-            for (idx in FaceGeometry.OVERLAY_LIPS) {
-                pts[k] = landmarks[idx].x(); pts[k + 1] = landmarks[idx].y(); k += 2
-            }
-            landmarkSnapshot = pts
-            imageSize = (bitmap.width.toLong() shl 32) or bitmap.height.toLong()
-        } else {
-            landmarkSnapshot = null
-        }
 
         // 3) Pose de la cabeza
         val matrix = result.facialTransformationMatrixes().orElse(null)?.firstOrNull()
         val head = if (matrix != null && matrix.size >= 16) HeadPose.fromMatrix(matrix) else FloatArray(6)
 
         // 4) Calibración
-        calibration.feed(raw, head, puffSides, t.feature, t0)
-        val g = gains
-        calibration.apply(raw, cal, s.autoRange, g)
-        // Cachetes: lo mejor entre MediaPipe y la geometría. Se anula si la boca está abierta,
-        // sonriendo, en "beso" o movida hacia un costado (eso también ensancha un lado de la cara).
+        calibration.feed(raw, head, feat, t0)
+        calibration.apply(raw, cal, s.autoRange)
+
+        // 5) Fusión con las medidas geométricas (más lineales y precisas una vez calibradas)
+        if (s.precise) fuseGeometry()
+
+        // 6) Cachetes: MediaPipe + geometría, anulados si la boca se abre, sonríe, hace "beso" o va a un costado
         val jaw = cal[ArKit.JAW_OPEN]
         val smile = (cal[ArKit.SMILE_L] + cal[ArKit.SMILE_R]) / 2f
         var side = 0f
         for (i in ArKit.SIDEWAYS) side = max(side, cal[i])
         val gate = gateDown(jaw, 0.2f, 4f) * gateDown(smile, 0.3f, 3f) *
             gateDown(side, 0.12f, 4f) * gateDown(cal[ArKit.MOUTH_PUCKER], 0.5f, 2f)
-        val puffSig = calibration.puffSignal(puffSides) * gate * g[ArKit.G_CHEEKS]
-        // Y el valor de MediaPipe también pasa por la misma compuerta
-        cal[ArKit.CHEEK_PUFF] *= gate
-        cal[ArKit.CHEEK_PUFF] = max(cal[ArKit.CHEEK_PUFF], puffSig).coerceIn(0f, 1f)
-        cal[ArKit.TONGUE_OUT] = (cal[ArKit.TONGUE_OUT]).coerceIn(0f, 1f)
+        cal[ArKit.CHEEK_PUFF] = max(cal[ArKit.CHEEK_PUFF], calibration.puffSignal(feat)) * gate
 
-        // Boca estable: sin ruido, simétrica y sin clipping
+        // 7) Ajuste fino por grupo + boca estable (anti-clipping al final)
+        val g = gains
+        for (i in 0 until ArKit.COUNT) {
+            val gi = ArKit.GROUP[i]
+            if (gi >= 0) cal[i] = (cal[i] * g[gi]).coerceIn(0f, 1f)
+        }
         MouthFix.apply(cal, s.mouthStable, s.mouthSymmetry, s.mouthSide)
 
         calibration.relativeHead(head, headRel)
@@ -129,7 +141,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             headRel[1] = -headRel[1]; headRel[2] = -headRel[2]; headRel[3] = -headRel[3]
         }
 
-        // 5) Filtros One Euro
+        // 8) Filtros One Euro
         val sm = s.smoothing.coerceIn(0f, 1f)
         val blendCut = lerp(12f, 1.2f, sm)
         val headCut = lerp(6f, 0.6f, sm)
@@ -148,11 +160,18 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         val tdx = tongueDirFilters[0].filter(tx, t0)
         val tdy = tongueDirFilters[1].filter(t.y, t0)
 
+        // 9) Expresiones VRM (A I U E O, parpadeo, emociones)
+        Vrm.compute(raw, blend, calibration, g[ArKit.G_MOUTH_OPEN], s.gainEmotions, vrmRaw)
+        val vrm = FloatArray(Vrm.COUNT)
+        for (i in 0 until Vrm.COUNT) {
+            val f = vrmFilters[i]
+            f.minCutoff = blendCut; f.beta = 1.5f
+            vrm[i] = f.filter(vrmRaw[i], t0).coerceIn(0f, 1f)
+        }
+
         val pitch = if (s.invertPitch) -hf[0] else hf[0]
         val yaw = if (s.invertYaw) -hf[1] else hf[1]
         val roll = if (s.invertRoll) -hf[2] else hf[2]
-
-        // 6) Ojos (grados) a partir de los blendshapes de mirada
         val ex = if (s.invertEyesX) -1f else 1f
         val ey = if (s.invertEyesY) -1f else 1f
         val leftEye = floatArrayOf(
@@ -164,19 +183,94 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             ex * (blend[ArKit.LOOK_IN_R] - blend[ArKit.LOOK_OUT_R]) * EYE_YAW_DEG,
         )
 
-        val frame = FaceFrame(
-            timestampNanos = t0,
-            faceFound = true,
-            blend = blend,
-            headRot = floatArrayOf(pitch, yaw, roll),
-            headPos = floatArrayOf(hf[3] / 100f, hf[4] / 100f, hf[5] / 100f),
-            leftEye = leftEye,
-            rightEye = rightEye,
-            tongueX = tdx,
-            tongueY = tdy,
+        emit(
+            FaceFrame(
+                timestampNanos = t0, faceFound = true, blend = blend,
+                headRot = floatArrayOf(pitch, yaw, roll),
+                headPos = floatArrayOf(hf[3] / 100f, hf[4] / 100f, hf[5] / 100f),
+                leftEye = leftEye, rightEye = rightEye, tongueX = tdx, tongueY = tdy, vrm = vrm,
+            ),
+            t,
         )
-        emit(frame, t)
         lastProcessMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6f
+    }
+
+    /** Parpadeo, boca y mirada: mitad MediaPipe, mitad geometría calibrada. */
+    private fun fuseGeometry() {
+        for (k in 0..1) {
+            val idx = if (k == 0) ArKit.EYE_BLINK_L else ArKit.EYE_BLINK_R
+            val geo = calibration.blinkGeo(k, feat[if (k == 0) Feat.EAR_L else Feat.EAR_R])
+            if (!geo.isNaN()) {
+                val v = 0.5f * cal[idx] + 0.5f * geo
+                // Los extremos quedan firmes (ojo bien abierto / bien cerrado)
+                cal[idx] = ((v - 0.12f) / 0.76f).coerceIn(0f, 1f)
+            }
+        }
+        val jg = calibration.jawGeo(feat[Feat.GAP])
+        if (!jg.isNaN()) cal[ArKit.JAW_OPEN] = 0.5f * cal[ArKit.JAW_OPEN] + 0.5f * jg
+
+        // Mirada desde el iris (se congela mientras el ojo está cerrado: el iris no se ve)
+        for (k in 0..1) {
+            val left = k == 0
+            val blink = cal[if (left) ArKit.EYE_BLINK_L else ArKit.EYE_BLINK_R]
+            if (calibration.gaze(feat, left, gz)) {
+                if (blink < 0.5f) { lastGaze[k * 2] = gz[0]; lastGaze[k * 2 + 1] = gz[1] }
+                val hh = lastGaze[k * 2]; val vv = lastGaze[k * 2 + 1]
+                val out = if (left) ArKit.LOOK_OUT_L else ArKit.LOOK_OUT_R
+                val inn = if (left) ArKit.LOOK_IN_L else ArKit.LOOK_IN_R
+                val up = if (left) ArKit.LOOK_UP_L else ArKit.LOOK_UP_R
+                val down = if (left) ArKit.LOOK_DOWN_L else ArKit.LOOK_DOWN_R
+                cal[out] = 0.3f * cal[out] + 0.7f * max(0f, hh)
+                cal[inn] = 0.3f * cal[inn] + 0.7f * max(0f, -hh)
+                cal[down] = 0.3f * cal[down] + 0.7f * max(0f, vv)
+                cal[up] = 0.3f * cal[up] + 0.7f * max(0f, -vv)
+            }
+        }
+    }
+
+    /** En modo automático mide GPU y CPU con la cara real y se queda con el más rápido. */
+    private fun benchmark(ms: Float) {
+        if (benchPhase == 0) return
+        benchN++
+        if (benchN <= BENCH_SKIP) return
+        benchSum += ms
+        if (benchN < BENCH_SKIP + BENCH_FRAMES) return
+        val avg = benchSum / BENCH_FRAMES
+        benchN = 0; benchSum = 0f
+        if (benchPhase == 1) {
+            gpuMs = avg
+            try {
+                val cpu = FaceTracker(appContext, false)
+                other = tracker
+                tracker = cpu
+                benchPhase = 2
+                accelLabel = "probando CPU…"
+            } catch (e: Throwable) {
+                benchPhase = 0
+                accelLabel = "GPU"
+            }
+        } else {
+            val cpuMs = avg
+            val keepCpu = cpuMs < gpuMs * 0.9f
+            val gpuTracker = other
+            if (keepCpu || gpuTracker == null) {
+                gpuTracker?.close()
+            } else {
+                tracker.close()
+                tracker = gpuTracker
+            }
+            other = null
+            benchPhase = 0
+            accelLabel = if (tracker.gpu) "GPU (auto)" else "CPU (auto)"
+            Log.i(TAG, "Benchmark: GPU %.1f ms, CPU %.1f ms -> %s".format(gpuMs, cpuMs, accelLabel))
+        }
+    }
+
+    private fun snapshot(lm: List<NormalizedLandmark>, w: Int, h: Int) {
+        val pts = FloatArray(lm.size * 2)
+        for (i in lm.indices) { pts[i * 2] = lm[i].x(); pts[i * 2 + 1] = lm[i].y() }
+        landmarkSnapshot = pts
+        imageSize = (w.toLong() shl 32) or h.toLong()
     }
 
     private fun emit(frame: FaceFrame, t: TongueDetector.Result?) {
@@ -187,6 +281,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     private fun resetFilters() {
         blendFilters.forEach { it.reset() }
         headFilters.forEach { it.reset() }
+        vrmFilters.forEach { it.reset() }
         tongueDirFilters.forEach { it.reset() }
         tongue.reset()
     }
@@ -195,13 +290,19 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         sinks.forEach { it.close() }
         sinks.clear()
         tracker.close()
+        other?.close()
     }
 
     companion object {
+        private const val TAG = "Pipeline"
+        const val ACCEL_AUTO = 0
+        const val ACCEL_GPU = 1
+        const val ACCEL_CPU = 2
         const val EYE_YAW_DEG = 30f
         const val EYE_PITCH_DEG = 25f
+        private const val BENCH_SKIP = 10
+        private const val BENCH_FRAMES = 40
         private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
-        /** 1 por debajo de [start]; baja hasta 0 con pendiente [slope]. */
         private fun gateDown(v: Float, start: Float, slope: Float) = (1f - max(0f, v - start) * slope).coerceIn(0f, 1f)
     }
 }
