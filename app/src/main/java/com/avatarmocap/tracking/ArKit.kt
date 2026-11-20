@@ -91,6 +91,27 @@ object ArKit {
     }
 
     val MOUTH_PUCKER = idx("mouthPucker")
+    val MOUTH_CLOSE = idx("mouthClose")
+    val ROLL_LOWER = idx("mouthRollLower")
+    val ROLL_UPPER = idx("mouthRollUpper")
+    val JAW_LEFT = idx("jawLeft")
+    val JAW_RIGHT = idx("jawRight")
+
+    /** Blendshapes de boca que MediaPipe estima con mucho ruido: llevan zona muerta en modo estable. */
+    val NOISY_MOUTH: IntArray = arrayOf(
+        "mouthLeft", "mouthRight", "jawLeft", "jawRight", "jawForward",
+        "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+        "mouthPressLeft", "mouthPressRight", "mouthStretchLeft", "mouthStretchRight",
+        "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft", "mouthFrownRight",
+    ).map { idx(it) }.toIntArray()
+
+    /** Pares izquierda/derecha de la boca que se pueden simetrizar. */
+    val MOUTH_PAIRS: Array<IntArray> = arrayOf(
+        "mouthSmile", "mouthFrown", "mouthStretch", "mouthPress",
+        "mouthLowerDown", "mouthUpperUp", "mouthDimple", "cheekSquint",
+    ).map { intArrayOf(idx(it + "Left"), idx(it + "Right")) }.toTypedArray()
+
+    val SIDEWAYS: IntArray = intArrayOf(MOUTH_LEFT, MOUTH_RIGHT, JAW_LEFT, JAW_RIGHT)
 
     /** Intercambia lados in-place (útil si la cámara entrega la imagen espejada). */
     fun swapSides(v: FloatArray) {

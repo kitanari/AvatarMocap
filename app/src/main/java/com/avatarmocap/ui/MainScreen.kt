@@ -57,6 +57,12 @@ import com.avatarmocap.UiState
 import com.avatarmocap.output.IFacialMocapServer
 import com.avatarmocap.tracking.ArKit
 import com.avatarmocap.tracking.CalibStep
+import com.avatarmocap.tracking.FaceGeometry
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.PointMode
+import androidx.compose.ui.graphics.StrokeCap
+import kotlin.math.max
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -84,11 +90,13 @@ fun MainScreen(vm: TrackingViewModel) {
         // ---------- Vista previa + estado
         item {
             Column {
+                val tall = s.showPreview || s.showLandmarks
                 Box(
-                    Modifier.fillMaxWidth().height(if (s.showPreview) 280.dp else 90.dp)
+                    Modifier.fillMaxWidth().height(if (tall) 280.dp else 90.dp)
                         .clip(RoundedCornerShape(16.dp)).background(Color(0xFF1A1A1A))
                 ) {
                     if (s.showPreview) AndroidView({ previewView }, Modifier.fillMaxWidth().height(280.dp))
+                    if (s.showLandmarks) LandmarkOverlay(ui, Modifier.fillMaxWidth().height(280.dp))
                     StatusOverlay(ui, Modifier.align(Alignment.TopStart).padding(8.dp))
                 }
                 if (ui.message.isNotEmpty()) {
@@ -99,6 +107,21 @@ fun MainScreen(vm: TrackingViewModel) {
 
         // ---------- Calibración guiada
         item { CalibrationCard(ui, vm) }
+
+        // ---------- Boca
+        item {
+            Section("Boca") {
+                ToggleRow("Boca estable (filtra gestos con ruido)", s.mouthStable) { v -> vm.update { it.copy(mouthStable = v) } }
+                Text("Simetría: %.0f%%".format(s.mouthSymmetry * 100), fontSize = 13.sp)
+                Slider(s.mouthSymmetry, { v -> vm.update { it.copy(mouthSymmetry = v) } })
+                Text("Mover la boca a los costados: %.0f%%".format(s.mouthSide * 100), fontSize = 13.sp)
+                Slider(s.mouthSide, { v -> vm.update { it.copy(mouthSide = v) } })
+                Text(
+                    "Si la boca se ve torcida, subí la simetría. Si se abre de más, bajá \"Boca abierta\" en Ajuste fino.",
+                    fontSize = 12.sp,
+                )
+            }
+        }
 
         // ---------- Ajuste fino
         item {
@@ -153,6 +176,7 @@ fun MainScreen(vm: TrackingViewModel) {
                     }
                 }
                 ToggleRow("Mostrar cámara (apagarla da más fps)", s.showPreview) { v -> vm.update { it.copy(showPreview = v) } }
+                ToggleRow("Mostrar puntos de la cara", s.showLandmarks) { v -> vm.update { it.copy(showLandmarks = v) } }
                 ToggleRow("Usar GPU (requiere reiniciar la app)", s.useGpu) { v -> vm.update { it.copy(useGpu = v) } }
                 Text(
                     "Si con GPU va lento, probá desactivarla: en algunos teléfonos la CPU es más rápida.",
@@ -214,6 +238,34 @@ fun MainScreen(vm: TrackingViewModel) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Dibuja los puntos detectados sobre la vista previa. La vista previa de la cámara frontal
+ * está espejada y recortada al centro (FILL_CENTER), así que se aplica lo mismo a los puntos.
+ */
+@Composable
+private fun LandmarkOverlay(ui: UiState, modifier: Modifier) {
+    val pts = ui.landmarks ?: return
+    if (ui.imgW <= 0 || ui.imgH <= 0) return
+    val lipStart = FaceGeometry.OVERLAY_POINTS.size * 2
+    Canvas(modifier) {
+        val scale = max(size.width / ui.imgW, size.height / ui.imgH)
+        val dw = ui.imgW * scale
+        val dh = ui.imgH * scale
+        val ox = (size.width - dw) / 2f
+        val oy = (size.height - dh) / 2f
+        val face = ArrayList<Offset>(lipStart / 2)
+        val lips = ArrayList<Offset>((pts.size - lipStart) / 2)
+        var i = 0
+        while (i < pts.size) {
+            val o = Offset(ox + (1f - pts[i]) * dw, oy + pts[i + 1] * dh)
+            if (i < lipStart) face.add(o) else lips.add(o)
+            i += 2
+        }
+        drawPoints(face, PointMode.Points, Color(0xFF4DD0E1), strokeWidth = 6f, cap = StrokeCap.Round)
+        drawPoints(lips, PointMode.Points, Color(0xFFFF6699), strokeWidth = 6f, cap = StrokeCap.Round)
     }
 }
 

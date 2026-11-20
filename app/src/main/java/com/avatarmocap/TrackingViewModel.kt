@@ -44,6 +44,10 @@ data class UiState(
     /** -1 sin captura; 0..1 preparación; 1..2 midiendo. */
     val captureProgress: Float = -1f,
     val calibratedSteps: Set<CalibStep> = emptySet(),
+    // Puntos de la cara para dibujar sobre la cámara
+    val landmarks: FloatArray? = null,
+    val imgW: Int = 0,
+    val imgH: Int = 0,
 )
 
 class TrackingViewModel(app: Application) : AndroidViewModel(app) {
@@ -91,7 +95,9 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             frames = 0; fpsWindowStart = now
         }
         t?.debug?.let { lastDebug = it.asImageBitmap() }
-        if (now - lastUiNanos < 100_000_000L) return
+        // Con los puntos visibles refrescamos a ~20 Hz para que sigan bien a la cara
+        val interval = if (_settings.value.showLandmarks) 50_000_000L else 100_000_000L
+        if (now - lastUiNanos < interval) return
         lastUiNanos = now
         val p = pipeline
         val sinks = p.sinks
@@ -108,6 +114,9 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             ifmStatus = sinks.firstOrNull { it is IFacialMocapServer }?.status?.value ?: "Desactivado",
             vtsStatus = sinks.firstOrNull { it is VTubeStudioPlugin }?.status?.value ?: "Desactivado",
             captureProgress = p.calibration.progress(now),
+            landmarks = p.landmarkSnapshot,
+            imgW = (p.imageSize ushr 32).toInt(),
+            imgH = (p.imageSize and 0xFFFFFFFFL).toInt(),
         ) }
     }
 

@@ -46,8 +46,9 @@ class Calibration {
     val neutralHead = FloatArray(6)
     /** Máximo calibrado por blendshape (NaN = sin calibrar). */
     val maxV = FloatArray(ArKit.COUNT) { Float.NaN }
-    @Volatile var puffNeutral = Float.NaN
-    @Volatile var puffMax = Float.NaN
+    /** Cachetes por lado (izq/der de la imagen). NaN = sin calibrar. */
+    val puffNeutral = floatArrayOf(Float.NaN, Float.NaN)
+    val puffMax = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var tongueF0 = 0.08f
     @Volatile var tongueF1 = 0.45f
     @Volatile var hasNeutral = false
@@ -79,15 +80,16 @@ class Calibration {
     }
 
     @Synchronized
-    fun feed(raw: FloatArray, head: FloatArray, puff: Float, tongueFeature: Float, nowNanos: Long) {
+    fun feed(raw: FloatArray, head: FloatArray, puff: FloatArray, tongueFeature: Float, nowNanos: Long) {
         val step = capturing ?: return
         val t = nowNanos - capStart
         if (t < WARMUP_NS) return
-        val s = FloatArray(ArKit.COUNT + 8)
+        val s = FloatArray(ArKit.COUNT + 9)
         System.arraycopy(raw, 0, s, 0, ArKit.COUNT)
         System.arraycopy(head, 0, s, ArKit.COUNT, 6)
-        s[ArKit.COUNT + 6] = puff
-        s[ArKit.COUNT + 7] = tongueFeature
+        s[ArKit.COUNT + 6] = puff[0]
+        s[ArKit.COUNT + 7] = puff[1]
+        s[ArKit.COUNT + 8] = tongueFeature
         samples.add(s)
         if (t >= WARMUP_NS + CAPTURE_NS && samples.size >= 5) {
             capturing = null
@@ -98,15 +100,16 @@ class Calibration {
     private fun col(c: Int) = FloatArray(samples.size) { samples[it][c] }
 
     private fun finish(step: CalibStep) {
-        val puffCol = ArKit.COUNT + 6
-        val tongueCol = ArKit.COUNT + 7
+        val puffCol = ArKit.COUNT + 6 // y +7
+        val tongueCol = ArKit.COUNT + 8
         var ok = true
         var msg = "${step.title} ✓"
         when (step) {
             CalibStep.NEUTRAL -> {
                 for (i in 0 until ArKit.COUNT) neutral[i] = mean(col(i))
                 for (i in 0 until 6) neutralHead[i] = mean(col(ArKit.COUNT + i))
-                puffNeutral = mean(col(puffCol))
+                puffNeutral[0] = mean(col(puffCol))
+                puffNeutral[1] = mean(col(puffCol + 1))
                 hasNeutral = true
                 autoMax.fill(0f)
             }
@@ -128,8 +131,10 @@ class Calibration {
                 }
                 if (step == CalibStep.MOUTH_OPEN) tongueF0 = mean(col(tongueCol))
                 if (step == CalibStep.PUFF) {
-                    val p = upperMean(col(puffCol))
-                    puffMax = if (!puffNeutral.isNaN()) max(p, puffNeutral + 0.01f) else p
+                    for (k in 0..1) {
+                        val p = upperMean(col(puffCol + k))
+                        puffMax[k] = if (!puffNeutral[k].isNaN()) max(p, puffNeutral[k] + 0.005f) else p
+                    }
                 }
                 if (weak == step.indices.size && step != CalibStep.PUFF) {
                     ok = false
@@ -166,10 +171,16 @@ class Calibration {
     }
 
     /** Señal 0..1 de cachetes inflados a partir de la geometría. */
-    fun puffSignal(ratio: Float): Float {
-        if (puffNeutral.isNaN()) return 0f
-        val span = if (puffMax.isNaN()) DEFAULT_PUFF_SPAN else max(puffMax - puffNeutral, 0.008f)
-        return ((ratio - puffNeutral) / span).coerceIn(0f, 1f)
+    /** Mínimo de ambos lados: inflar ensancha los dos; mover la boca a un costado, solo uno. */
+    fun puffSignal(sides: FloatArray): Float {
+        var sig = 1f
+        for (k in 0..1) {
+            val n = puffNeutral[k]
+            if (n.isNaN()) return 0f
+            val span = if (puffMax[k].isNaN()) DEFAULT_PUFF_SPAN else max(puffMax[k] - n, 0.005f)
+            sig = min(sig, ((sides[k] - n) / span).coerceIn(0f, 1f))
+        }
+        return sig
     }
 
     fun relativeHead(head: FloatArray, out: FloatArray) {
@@ -179,7 +190,7 @@ class Calibration {
 
     fun resetAll() {
         neutral.fill(0f); neutralHead.fill(0f); maxV.fill(Float.NaN)
-        puffNeutral = Float.NaN; puffMax = Float.NaN
+        puffNeutral.fill(Float.NaN); puffMax.fill(Float.NaN)
         tongueF0 = 0.08f; tongueF1 = 0.45f
         hasNeutral = false
         done.clear()
@@ -195,8 +206,8 @@ class Calibration {
             .put("neutral", arr(neutral))
             .put("neutralHead", arr(neutralHead))
             .put("max", arr(maxV))
-            .put("puffNeutral", if (puffNeutral.isNaN()) -1.0 else puffNeutral.toDouble())
-            .put("puffMax", if (puffMax.isNaN()) -1.0 else puffMax.toDouble())
+            .put("puffNeutral2", arr(puffNeutral))
+            .put("puffMax2", arr(puffMax))
             .put("tongueF0", tongueF0.toDouble())
             .put("tongueF1", tongueF1.toDouble())
             .put("done", JSONArray(done.map { it.name }))
@@ -218,14 +229,17 @@ class Calibration {
             read("neutralHead", neutralHead, false)
             read("max", maxV, true)
             hasNeutral = o.optBoolean("hasNeutral")
-            puffNeutral = o.optDouble("puffNeutral", -1.0).toFloat().let { if (it < 0f) Float.NaN else it }
-            puffMax = o.optDouble("puffMax", -1.0).toFloat().let { if (it < 0f) Float.NaN else it }
+            if (o.has("puffNeutral2")) read("puffNeutral2", puffNeutral, true)
+            if (o.has("puffMax2")) read("puffMax2", puffMax, true)
             tongueF0 = o.optDouble("tongueF0", 0.08).toFloat()
             tongueF1 = o.optDouble("tongueF1", 0.45).toFloat()
             val d = o.optJSONArray("done")
             if (d != null) for (i in 0 until d.length()) {
                 runCatching { CalibStep.valueOf(d.getString(i)) }.getOrNull()?.let { done.add(it) }
             }
+            // Calibraciones viejas sin datos de cachetes por lado: hay que repetir esos pasos
+            if (puffNeutral[0].isNaN()) done.remove(CalibStep.NEUTRAL)
+            if (puffMax[0].isNaN()) done.remove(CalibStep.PUFF)
         } catch (e: Exception) {
             resetAll()
         }
@@ -237,7 +251,7 @@ class Calibration {
         private const val MIN_SPAN = 0.15f
         private const val AUTO_DECAY = 0.9995f
         private const val AUTO_MIN_RANGE = 0.6f
-        private const val DEFAULT_PUFF_SPAN = 0.04f
+        private const val DEFAULT_PUFF_SPAN = 0.025f
 
         private fun mean(a: FloatArray) = if (a.isEmpty()) 0f else a.sum() / a.size
 

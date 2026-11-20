@@ -32,6 +32,15 @@ data class AppSettings(
     val smoothing: Float = 0.4f,
     val autoRange: Boolean = false,
     val showTongueDebug: Boolean = false,
+    val showLandmarks: Boolean = true,
+
+    // Boca
+    /** Zona muerta en los blendshapes de boca ruidosos. */
+    val mouthStable: Boolean = true,
+    /** 0 = cada lado independiente, 1 = boca totalmente simétrica. */
+    val mouthSymmetry: Float = 0.6f,
+    /** Multiplicador de mover la boca/mandíbula a los costados. */
+    val mouthSide: Float = 0.5f,
 
     // Ajuste fino por grupo (multiplicadores), en el orden de ArKit.G_*
     val gainEyes: Float = 1f,
@@ -75,6 +84,10 @@ class SettingsStore(context: Context) {
             smoothing = prefs.getFloat("smoothing", d.smoothing),
             autoRange = prefs.getBoolean("autoRange2", d.autoRange),
             showTongueDebug = prefs.getBoolean("showTongueDebug2", d.showTongueDebug),
+            showLandmarks = prefs.getBoolean("showLandmarks", d.showLandmarks),
+            mouthStable = prefs.getBoolean("mouthStable", d.mouthStable),
+            mouthSymmetry = prefs.getFloat("mouthSymmetry", d.mouthSymmetry),
+            mouthSide = prefs.getFloat("mouthSide", d.mouthSide),
             gainEyes = prefs.getFloat("gainEyes", 1f),
             gainBrows = prefs.getFloat("gainBrows", 1f),
             gainMouthOpen = prefs.getFloat("gainMouthOpen", 1f),
@@ -104,6 +117,10 @@ class SettingsStore(context: Context) {
             .putFloat("smoothing", s.smoothing)
             .putBoolean("autoRange2", s.autoRange)
             .putBoolean("showTongueDebug2", s.showTongueDebug)
+            .putBoolean("showLandmarks", s.showLandmarks)
+            .putBoolean("mouthStable", s.mouthStable)
+            .putFloat("mouthSymmetry", s.mouthSymmetry)
+            .putFloat("mouthSide", s.mouthSide)
             .putFloat("gainEyes", s.gainEyes)
             .putFloat("gainBrows", s.gainBrows)
             .putFloat("gainMouthOpen", s.gainMouthOpen)

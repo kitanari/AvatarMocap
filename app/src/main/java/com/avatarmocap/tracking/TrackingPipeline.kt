@@ -34,6 +34,13 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     @Volatile var lastProcessMs = 0f
         private set
 
+    /** Puntos de la cara para dibujar (x,y normalizados), o null si está apagado. */
+    @Volatile var landmarkSnapshot: FloatArray? = null
+        private set
+    @Volatile var imageSize: Long = 0L // (w shl 32) or h
+        private set
+
+    private val puffSides = FloatArray(2)
     private val raw = FloatArray(ArKit.COUNT)
     private val cal = FloatArray(ArKit.COUNT)
     private val headRel = FloatArray(6)
@@ -54,6 +61,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         val landmarks = result?.faceLandmarks()?.firstOrNull()
         if (result == null || landmarks == null) {
             if (++lostFrames == 10) resetFilters()
+            landmarkSnapshot = null
             emit(FaceFrame.lost(t0), null)
             lastProcessMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6f
             return
@@ -71,24 +79,47 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         tongue.f1 = calibration.tongueF1
         val t = tongue.process(bitmap, landmarks, s.showTongueDebug)
         raw[ArKit.TONGUE_OUT] = t.value
-        val puff = FaceGeometry.puffRatio(landmarks, bitmap.width, bitmap.height)
+        FaceGeometry.puffSides(landmarks, bitmap.width, bitmap.height, puffSides)
+        if (s.showLandmarks) {
+            val pts = FloatArray((FaceGeometry.OVERLAY_POINTS.size + FaceGeometry.OVERLAY_LIPS.size) * 2)
+            var k = 0
+            for (idx in FaceGeometry.OVERLAY_POINTS) {
+                if (idx < landmarks.size) { pts[k] = landmarks[idx].x(); pts[k + 1] = landmarks[idx].y() }
+                k += 2
+            }
+            for (idx in FaceGeometry.OVERLAY_LIPS) {
+                pts[k] = landmarks[idx].x(); pts[k + 1] = landmarks[idx].y(); k += 2
+            }
+            landmarkSnapshot = pts
+            imageSize = (bitmap.width.toLong() shl 32) or bitmap.height.toLong()
+        } else {
+            landmarkSnapshot = null
+        }
 
         // 3) Pose de la cabeza
         val matrix = result.facialTransformationMatrixes().orElse(null)?.firstOrNull()
         val head = if (matrix != null && matrix.size >= 16) HeadPose.fromMatrix(matrix) else FloatArray(6)
 
         // 4) Calibración
-        calibration.feed(raw, head, puff, t.feature, t0)
+        calibration.feed(raw, head, puffSides, t.feature, t0)
         val g = gains
         calibration.apply(raw, cal, s.autoRange, g)
-        // Cachetes: lo mejor entre MediaPipe y la geometría, anulado si la boca está abierta o sonriendo
-        val jaw = raw[ArKit.JAW_OPEN]
-        val smile = (raw[ArKit.SMILE_L] + raw[ArKit.SMILE_R]) / 2f
-        val gate = (1f - max(0f, jaw - 0.2f) * 4f).coerceIn(0f, 1f) *
-            (1f - max(0f, smile - 0.35f) * 3f).coerceIn(0f, 1f)
-        val puffSig = calibration.puffSignal(puff) * gate * g[ArKit.G_CHEEKS]
+        // Cachetes: lo mejor entre MediaPipe y la geometría. Se anula si la boca está abierta,
+        // sonriendo, en "beso" o movida hacia un costado (eso también ensancha un lado de la cara).
+        val jaw = cal[ArKit.JAW_OPEN]
+        val smile = (cal[ArKit.SMILE_L] + cal[ArKit.SMILE_R]) / 2f
+        var side = 0f
+        for (i in ArKit.SIDEWAYS) side = max(side, cal[i])
+        val gate = gateDown(jaw, 0.2f, 4f) * gateDown(smile, 0.3f, 3f) *
+            gateDown(side, 0.12f, 4f) * gateDown(cal[ArKit.MOUTH_PUCKER], 0.5f, 2f)
+        val puffSig = calibration.puffSignal(puffSides) * gate * g[ArKit.G_CHEEKS]
+        // Y el valor de MediaPipe también pasa por la misma compuerta
+        cal[ArKit.CHEEK_PUFF] *= gate
         cal[ArKit.CHEEK_PUFF] = max(cal[ArKit.CHEEK_PUFF], puffSig).coerceIn(0f, 1f)
         cal[ArKit.TONGUE_OUT] = (cal[ArKit.TONGUE_OUT]).coerceIn(0f, 1f)
+
+        // Boca estable: sin ruido, simétrica y sin clipping
+        MouthFix.apply(cal, s.mouthStable, s.mouthSymmetry, s.mouthSide)
 
         calibration.relativeHead(head, headRel)
         var tx = t.x
@@ -170,5 +201,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         const val EYE_YAW_DEG = 30f
         const val EYE_PITCH_DEG = 25f
         private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+        /** 1 por debajo de [start]; baja hasta 0 con pendiente [slope]. */
+        private fun gateDown(v: Float, start: Float, slope: Float) = (1f - max(0f, v - start) * slope).coerceIn(0f, 1f)
     }
 }
