@@ -154,7 +154,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
     fun discoverVts() {
         message("Buscando VTube Studio en la red…")
         viewModelScope.launch(Dispatchers.IO) {
-            val found = VTubeStudioPlugin.discover(getApplication())
+            val found = VTubeStudioPlugin.discover(getApplication<Application>())
             if (found == null) {
                 message("No se encontró VTS. ¿Está la API activada y la PC en la misma red Wi-Fi?")
             } else {
