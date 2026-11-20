@@ -64,6 +64,8 @@ data class AppSettings(
     val iphoneRanges: Boolean = true,
     /** Calibración rápida: solo de frente (sin girar la cabeza). */
     val quickCalibration: Boolean = false,
+    /** Enviar a 60 fps interpolando entre cuadros de tracking. */
+    val interpolate: Boolean = true,
 
     // Ajuste fino por grupo (multiplicadores), en el orden de ArKit.G_*
     val gainEyes: Float = 1f,
@@ -122,6 +124,7 @@ class SettingsStore(context: Context) {
             mouthLimit = prefs.getFloat("mouthLimit", d.mouthLimit),
             iphoneRanges = prefs.getBoolean("iphoneRanges", d.iphoneRanges),
             quickCalibration = prefs.getBoolean("quickCalibration", d.quickCalibration),
+            interpolate = prefs.getBoolean("interpolate", d.interpolate),
             gainEyes = prefs.getFloat("gainEyes", 1f),
             gainBrows = prefs.getFloat("gainBrows", 1f),
             gainMouthOpen = prefs.getFloat("gainMouthOpen", 1f),
@@ -166,6 +169,7 @@ class SettingsStore(context: Context) {
             .putFloat("mouthLimit", s.mouthLimit)
             .putBoolean("iphoneRanges", s.iphoneRanges)
             .putBoolean("quickCalibration", s.quickCalibration)
+            .putBoolean("interpolate", s.interpolate)
             .putFloat("gainEyes", s.gainEyes)
             .putFloat("gainBrows", s.gainBrows)
             .putFloat("gainMouthOpen", s.gainMouthOpen)

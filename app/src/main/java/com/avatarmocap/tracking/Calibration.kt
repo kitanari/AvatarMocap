@@ -137,6 +137,12 @@ class Calibration {
 
     private val autoMax = FloatArray(ArKit.COUNT)
 
+    /** Puntos rígidos de la cara neutral (para la pose de cabeza sin influencia de la boca). */
+    @Volatile var rigidRef: FloatArray? = null
+        private set
+    private val rigidSum = FloatArray(RigidHead.COUNT * 3)
+    private var rigidN = 0
+
     // ---------- Captura guiada
 
     @Volatile var capturing: CalibStep? = null
@@ -149,6 +155,7 @@ class Calibration {
     @Synchronized
     fun startCapture(step: CalibStep, nowNanos: Long) {
         samples.clear()
+        rigidSum.fill(0f); rigidN = 0
         val poses = if (quickMode || !step.multiAngle) listOf(Pose.CENTER) else Pose.entries
         schedule = poses.map { it to (if (it == Pose.CENTER) CENTER_NS else POSE_NS) }
         capStart = nowNanos
@@ -171,7 +178,7 @@ class Calibration {
     }
 
     @Synchronized
-    fun feed(raw: FloatArray, head: FloatArray, feat: FloatArray, nowNanos: Long) {
+    fun feed(raw: FloatArray, head: FloatArray, feat: FloatArray, rigid: FloatArray, nowNanos: Long) {
         val step = capturing ?: return
         var t = nowNanos - capStart - PREP_NS
         if (t < 0) return
@@ -184,6 +191,10 @@ class Calibration {
                     System.arraycopy(head, 0, s, ArKit.COUNT, 6)
                     System.arraycopy(feat, 0, s, ArKit.COUNT + 6, Feat.COUNT)
                     samples.getOrPut(pose) { ArrayList() }.add(s)
+                    if (step == CalibStep.NEUTRAL && pose == Pose.CENTER) {
+                        for (i in rigidSum.indices) rigidSum[i] += rigid[i]
+                        rigidN++
+                    }
                 }
                 return
             }
@@ -223,6 +234,7 @@ class Calibration {
         val (ok, msg) = validate(step, center)
         if (ok) {
             steps[step] = bins
+            if (step == CalibStep.NEUTRAL && rigidN > 0) rigidRef = FloatArray(rigidSum.size) { rigidSum[it] / rigidN }
             recompute()
         }
         val extra = if (ok && weakPoses > 0) " (en $weakPoses ángulo(s) casi no giraste la cabeza; se usó el de frente)" else ""
@@ -454,6 +466,7 @@ class Calibration {
 
     fun resetAll() {
         steps.clear()
+        rigidRef = null
         recompute()
     }
 
@@ -471,7 +484,9 @@ class Calibration {
             }
             st.put(step.name, bo)
         }
-        return JSONObject().put("v", 4).put("steps", st).toString()
+        val o = JSONObject().put("v", 4).put("steps", st)
+        rigidRef?.let { o.put("rigidRef", arr(it)) }
+        return o.toString()
     }
 
     fun fromJson(s: String) {
@@ -480,6 +495,9 @@ class Calibration {
             if (s.isNotBlank()) {
                 val o = JSONObject(s)
                 if (o.optInt("v") == 4) {
+                    o.optJSONArray("rigidRef")?.let { ja ->
+                        if (ja.length() == RigidHead.COUNT * 3) rigidRef = FloatArray(ja.length()) { ja.getDouble(it).toFloat() }
+                    }
                     val st = o.getJSONObject("steps")
                     for (name in st.keys()) {
                         val step = runCatching { CalibStep.valueOf(name) }.getOrNull() ?: continue

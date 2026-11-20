@@ -21,7 +21,10 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     private val appContext = context.applicationContext
 
     @Volatile var settings: AppSettings = initial
-        set(value) { field = value; gains = value.gains(); calibration.quickMode = value.quickCalibration }
+        set(value) {
+            field = value; gains = value.gains(); calibration.quickMode = value.quickCalibration
+            scheduler.enabled = value.interpolate
+        }
     @Volatile private var gains: FloatArray = initial.gains()
 
     // ---- MediaPipe + elección automática GPU/CPU
@@ -37,6 +40,10 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     val tongue = TongueDetector()
     val calibration = Calibration().also { it.quickMode = initial.quickCalibration }
     val sinks = CopyOnWriteArrayList<OutputSink>()
+    /** Envío a 60 fps con interpolación. */
+    val scheduler = com.avatarmocap.output.OutputScheduler(sinks).also { it.enabled = initial.interpolate }
+    private val rigidCur = FloatArray(RigidHead.COUNT * 3)
+    private val rigidRot = FloatArray(3)
 
     var listener: ((FaceFrame, TongueDetector.Result?) -> Unit)? = null
 
@@ -136,7 +143,8 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         val head = if (matrix != null && matrix.size >= 16) HeadPose.fromMatrix(matrix) else FloatArray(6)
 
         // 4) Calibración (interpolada según hacia dónde mira la cabeza)
-        calibration.feed(raw, head, feat, t0)
+        RigidHead.extract(pts, w, h, rigidCur)
+        calibration.feed(raw, head, feat, rigidCur, t0)
         calibration.updatePose(head[0], head[1])
         calibration.apply(raw, cal, s.autoRange)
 
@@ -163,6 +171,12 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         MouthFix.apply(cal, s.mouthStable, s.mouthSymmetry, s.mouthSide, s.mouthLimit)
 
         calibration.relativeHead(head, headRel)
+        // Giro de cabeza solo con puntos rígidos: mover la boca ya no gira la cabeza
+        val ref = calibration.rigidRef
+        if (ref != null) {
+            RigidHead.solve(ref, rigidCur, rigidRot)
+            headRel[0] = rigidRot[0]; headRel[1] = rigidRot[1]; headRel[2] = rigidRot[2]
+        }
         var tx = t.x
         if (s.swapLeftRight) {
             ArKit.swapSides(cal)
@@ -324,7 +338,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     private var previewSeq = 0L
 
     private fun emit(frame: FaceFrame, t: TongueDetector.Result?) {
-        for (sink in sinks) sink.send(frame)
+        scheduler.push(frame)
         listener?.invoke(frame, t)
     }
 
@@ -338,6 +352,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     }
 
     override fun close() {
+        scheduler.close()
         sinks.forEach { it.close() }
         sinks.clear()
         tracker.close()

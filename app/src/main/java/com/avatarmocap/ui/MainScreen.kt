@@ -190,6 +190,7 @@ fun MainScreen(vm: TrackingViewModel) {
                         FilterChip(s.resolution == i, { vm.update { it.copy(resolution = i) } }, { Text(label) })
                     }
                 }
+                ToggleRow("Envío a 60 fps (interpola entre cuadros)", s.interpolate) { v -> vm.update { it.copy(interpolate = v) } }
                 ToggleRow("Mostrar cámara (apagarla da más fps)", s.showPreview) { v -> vm.update { it.copy(showPreview = v) } }
                 Text("Sobre la cara", fontSize = 13.sp)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -351,7 +352,10 @@ private fun StatusOverlay(ui: UiState, modifier: Modifier) {
             if (ui.faceFound) "● Cara detectada" else "○ Sin cara",
             color = if (ui.faceFound) Color(0xFF66FF99) else Color(0xFFFF6666),
         )
-        Text("tracking %.0f fps · cámara %.0f fps".format(ui.fps, ui.cameraFps), fontSize = 12.sp, color = Color.White)
+        Text(
+            "tracking %.0f fps · cámara %.0f fps · envío %.0f fps".format(ui.fps, ui.cameraFps, ui.sendFps),
+            fontSize = 12.sp, color = Color.White,
+        )
         Text(
             "MediaPipe %.0f ms · lengua %.0f ms · total %.0f ms".format(ui.detectMs, ui.tongueMs, ui.processMs),
             fontSize = 12.sp, color = Color.White,

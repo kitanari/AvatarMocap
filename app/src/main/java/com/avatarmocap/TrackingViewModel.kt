@@ -51,6 +51,7 @@ data class UiState(
     val capture: CaptureStatus? = null,
     val calibratedSteps: Set<CalibStep> = emptySet(),
     val convertMs: Float = 0f,
+    val sendFps: Float = 0f,
     val tongueMs: Float = 0f,
 )
 
@@ -130,6 +131,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             vtsStatus = sinks.firstOrNull { it is VTubeStudioPlugin }?.status?.value ?: "Desactivado",
             capture = p.calibration.captureStatus(now),
             convertMs = camera.convertMs,
+            sendFps = p.scheduler.sendFps,
             tongueMs = p.lastTongueMs,
         ) }
     }
