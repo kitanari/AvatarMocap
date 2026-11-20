@@ -11,35 +11,39 @@ import androidx.lifecycle.viewModelScope
 import com.avatarmocap.camera.CameraSource
 import com.avatarmocap.output.IFacialMocapServer
 import com.avatarmocap.output.NetUtils
-import com.avatarmocap.output.OutputSink
 import com.avatarmocap.output.VTubeStudioPlugin
 import com.avatarmocap.settings.AppSettings
 import com.avatarmocap.settings.SettingsStore
 import com.avatarmocap.tracking.ArKit
+import com.avatarmocap.tracking.CalibStep
 import com.avatarmocap.tracking.FaceFrame
 import com.avatarmocap.tracking.TongueDetector
 import com.avatarmocap.tracking.TrackingPipeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class UiState(
     val faceFound: Boolean = false,
     val fps: Float = 0f,
+    val processMs: Float = 0f,
     val gpu: Boolean = false,
     val blend: FloatArray = FloatArray(ArKit.COUNT),
     val headRot: FloatArray = FloatArray(3),
     val tongueValue: Float = 0f,
     val tongueFeature: Float = 0f,
-    val tongueF0: Float = 0f,
-    val tongueF1: Float = 0f,
     val tongueDebug: ImageBitmap? = null,
     val ifmStatus: String = "",
     val vtsStatus: String = "",
     val message: String = "",
-    val neutralCalibrated: Boolean = false,
     val phoneIps: List<String> = emptyList(),
+    // Calibración guiada
+    val wizardStep: CalibStep? = null,
+    /** -1 sin captura; 0..1 preparación; 1..2 midiendo. */
+    val captureProgress: Float = -1f,
+    val calibratedSteps: Set<CalibStep> = emptySet(),
 )
 
 class TrackingViewModel(app: Application) : AndroidViewModel(app) {
@@ -55,34 +59,22 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
 
     private val pipeline: TrackingPipeline by lazy {
         TrackingPipeline(app, _settings.value).also { p ->
-            p.calibration.deserialize(store.neutralCalibration)
-            p.tongue.f0 = store.tongueF0
-            p.tongue.f1 = store.tongueF1
-            p.calibration.onNeutralDone = {
-                store.neutralCalibration = p.calibration.serialize()
-                message("Cara neutral calibrada ✓")
-            }
-            p.tongue.onCalibrated = { target, v ->
-                if (target == 1) store.tongueF0 = v else store.tongueF1 = v
-                val ok = p.tongue.f1 - p.tongue.f0 > 0.05f
-                message(
-                    if (target == 1) "Boca abierta sin lengua guardada (f0=%.2f)".format(v)
-                    else if (ok) "Lengua afuera guardada (f1=%.2f) ✓".format(v)
-                    else "Poca diferencia entre las dos poses (f0=%.2f, f1=%.2f). Probá con más luz.".format(p.tongue.f0, v)
-                )
-            }
+            p.calibration.fromJson(store.calibrationJson)
+            p.calibration.onStepDone = { step, ok, msg -> onStepDone(step, ok, msg) }
             p.listener = ::onFrame
             rebuildSinks(p, _settings.value)
+            _ui.update { it.copy(calibratedSteps = p.calibration.done.toSet()) }
         }
     }
 
     // ---------- Cámara
 
-    fun startCamera(owner: LifecycleOwner, previewView: PreviewView) {
-        camera.start(owner, previewView) { bmp -> pipeline.process(bmp) }
+    fun startCamera(owner: LifecycleOwner, previewView: PreviewView?) {
+        // MediaPipe se inicializa en el hilo de la cámara con el primer cuadro (no traba la UI)
+        camera.start(owner, previewView, _settings.value.resolution) { bmp -> pipeline.process(bmp) }
     }
 
-    // ---------- Estado para la UI (limitado a ~15 Hz)
+    // ---------- Estado para la UI (limitado a ~10 Hz para no robarle CPU al tracking)
 
     private var lastUiNanos = 0L
     private var frames = 0
@@ -99,29 +91,28 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             frames = 0; fpsWindowStart = now
         }
         t?.debug?.let { lastDebug = it.asImageBitmap() }
-        if (now - lastUiNanos < 66_000_000L) return
+        if (now - lastUiNanos < 100_000_000L) return
         lastUiNanos = now
         val p = pipeline
         val sinks = p.sinks
-        _ui.value = _ui.value.copy(
+        _ui.update { it.copy(
             faceFound = frame.faceFound,
             fps = fps,
+            processMs = p.lastProcessMs,
             gpu = p.usingGpu,
             blend = frame.blend.copyOf(),
             headRot = frame.headRot.copyOf(),
-            tongueValue = t?.value ?: 0f,
+            tongueValue = frame.blend[ArKit.TONGUE_OUT],
             tongueFeature = t?.feature ?: 0f,
-            tongueF0 = p.tongue.f0,
-            tongueF1 = p.tongue.f1,
-            tongueDebug = lastDebug,
+            tongueDebug = if (_settings.value.showTongueDebug) lastDebug else null,
             ifmStatus = sinks.firstOrNull { it is IFacialMocapServer }?.status?.value ?: "Desactivado",
             vtsStatus = sinks.firstOrNull { it is VTubeStudioPlugin }?.status?.value ?: "Desactivado",
-            neutralCalibrated = p.calibration.hasNeutral,
-        )
+            captureProgress = p.calibration.progress(now),
+        ) }
     }
 
     private fun message(m: String) {
-        _ui.value = _ui.value.copy(message = m)
+        _ui.update { it.copy(message = m) }
     }
 
     // ---------- Ajustes
@@ -148,7 +139,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         if (s.vtsEnabled && s.vtsHost.isNotBlank()) {
             p.sinks.add(VTubeStudioPlugin(s.vtsHost.trim(), s.vtsPort, store.vtsToken) { store.vtsToken = it })
         }
-        _ui.value = _ui.value.copy(phoneIps = NetUtils.localIps())
+        _ui.update { it.copy(phoneIps = NetUtils.localIps()) }
     }
 
     fun discoverVts() {
@@ -164,24 +155,49 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ---------- Calibración
+    // ---------- Calibración guiada
 
-    fun calibrateNeutral() {
-        message("Mirá a la cámara con la cara relajada… (1 s)")
-        pipeline.calibration.startNeutralCapture()
+    fun startWizard() {
+        _ui.update { it.copy(wizardStep = CalibStep.entries.first(), message = "") }
     }
 
-    fun resetAutoRange() {
-        pipeline.calibration.resetAutoRange()
-        message("Auto-rango reiniciado: hacé tus expresiones al máximo un par de veces")
+    fun openStep(step: CalibStep) {
+        _ui.update { it.copy(wizardStep = step, message = "") }
     }
 
-    fun calibrateTongue(target: Int) {
-        message(
-            if (target == 1) "Abrí la boca SIN sacar la lengua… (1.5 s)"
-            else "Sacá la lengua todo lo que puedas… (1.5 s)"
-        )
-        pipeline.tongue.startCalibration(target)
+    fun closeWizard() {
+        _ui.update { it.copy(wizardStep = null) }
+    }
+
+    fun captureCurrent() {
+        val step = _ui.value.wizardStep ?: return
+        pipeline.calibration.startCapture(step, SystemClock.elapsedRealtimeNanos())
+    }
+
+    fun skipStep() {
+        val step = _ui.value.wizardStep ?: return
+        _ui.update { it.copy(wizardStep = next(step)) }
+    }
+
+    private fun next(step: CalibStep): CalibStep? =
+        CalibStep.entries.getOrNull(step.ordinal + 1)
+
+    private fun onStepDone(step: CalibStep, ok: Boolean, msg: String) {
+        val p = pipeline
+        store.calibrationJson = p.calibration.toJson()
+        val nextStep = if (ok) next(step) else step
+        _ui.update { it.copy(
+            message = if (ok && nextStep == null) "¡Calibración completa! ✓" else msg,
+            wizardStep = nextStep,
+            calibratedSteps = p.calibration.done.toSet(),
+            captureProgress = -1f,
+        ) }
+    }
+
+    fun resetCalibration() {
+        pipeline.calibration.resetAll()
+        store.calibrationJson = ""
+        _ui.update { it.copy(calibratedSteps = emptySet(), message = "Calibración borrada") }
     }
 
     override fun onCleared() {

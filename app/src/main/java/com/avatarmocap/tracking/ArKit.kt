@@ -67,6 +67,31 @@ object ArKit {
         INDEX.getValue(m)
     }
 
+    // Grupos para el "ajuste fino" de sensibilidad
+    const val G_EYES = 0
+    const val G_BROWS = 1
+    const val G_MOUTH_OPEN = 2
+    const val G_SMILE = 3
+    const val G_CHEEKS = 4
+    const val G_TONGUE = 5
+    const val GROUP_COUNT = 6
+
+    /** Grupo de cada blendshape, o -1 si no tiene ajuste de sensibilidad. */
+    val GROUP: IntArray = IntArray(COUNT) { i ->
+        val n = NAMES[i]
+        when {
+            n.startsWith("eyeBlink") || n.startsWith("eyeWide") || n.startsWith("eyeSquint") -> G_EYES
+            n.startsWith("brow") -> G_BROWS
+            n == "jawOpen" || n.startsWith("mouthLowerDown") || n.startsWith("mouthUpperUp") -> G_MOUTH_OPEN
+            n.startsWith("mouthSmile") || n.startsWith("cheekSquint") || n.startsWith("mouthDimple") -> G_SMILE
+            n == "cheekPuff" -> G_CHEEKS
+            n == "tongueOut" -> G_TONGUE
+            else -> -1
+        }
+    }
+
+    val MOUTH_PUCKER = idx("mouthPucker")
+
     /** Intercambia lados in-place (útil si la cámara entrega la imagen espejada). */
     fun swapSides(v: FloatArray) {
         for (i in 0 until COUNT) {

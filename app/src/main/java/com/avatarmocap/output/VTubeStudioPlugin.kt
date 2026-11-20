@@ -163,8 +163,8 @@ class VTubeStudioPlugin(
             return
         }
         lastFaceFound = true
-        // Límite ~60 envíos/s
-        if (frame.timestampNanos - lastSendNanos < 15_000_000L) return
+        // Límite ~30 envíos/s (VTS interpola a 60 fps por su cuenta)
+        if (frame.timestampNanos - lastSendNanos < 32_000_000L) return
         lastSendNanos = frame.timestampNanos
 
         val b = frame.blend
@@ -178,7 +178,7 @@ class VTubeStudioPlugin(
         put("FacePositionX", frame.headPos[0] * 100f)
         put("FacePositionY", frame.headPos[1] * 100f)
         put("FacePositionZ", frame.headPos[2] * 100f)
-        put("MouthOpen", (b[ArKit.JAW_OPEN] * 1.1f).coerceIn(0f, 1f))
+        put("MouthOpen", b[ArKit.JAW_OPEN])
         val smile = (b[ArKit.SMILE_L] + b[ArKit.SMILE_R]) / 2f
         val frown = (b[ArKit.FROWN_L] + b[ArKit.FROWN_R]) / 2f
         put("MouthSmile", (0.5f + 0.5f * (smile - frown)).coerceIn(0f, 1f))

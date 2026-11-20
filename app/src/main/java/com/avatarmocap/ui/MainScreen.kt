@@ -6,6 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,8 +18,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -25,6 +31,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,9 +53,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.avatarmocap.TrackingViewModel
+import com.avatarmocap.UiState
 import com.avatarmocap.output.IFacialMocapServer
 import com.avatarmocap.tracking.ArKit
+import com.avatarmocap.tracking.CalibStep
 
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(vm: TrackingViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
@@ -60,40 +71,54 @@ fun MainScreen(vm: TrackingViewModel) {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
         }
     }
-    LaunchedEffect(previewView) { vm.startCamera(owner, previewView) }
+    // Se vuelve a enlazar la cámara si cambia la resolución o se muestra/oculta la vista previa
+    LaunchedEffect(s.resolution, s.showPreview) {
+        vm.startCamera(owner, if (s.showPreview) previewView else null)
+    }
 
     LazyColumn(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+        contentPadding = PaddingValues(12.dp),
     ) {
         // ---------- Vista previa + estado
-        item { Column {
-            Box(Modifier.fillMaxWidth().height(300.dp).clip(RoundedCornerShape(16.dp))) {
-                AndroidView({ previewView }, Modifier.fillMaxWidth().height(300.dp))
-                Column(
-                    Modifier.align(Alignment.TopStart).padding(8.dp)
-                        .background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(8.dp)
+        item {
+            Column {
+                Box(
+                    Modifier.fillMaxWidth().height(if (s.showPreview) 280.dp else 90.dp)
+                        .clip(RoundedCornerShape(16.dp)).background(Color(0xFF1A1A1A))
                 ) {
-                    Text(
-                        if (ui.faceFound) "● Cara detectada" else "○ Sin cara",
-                        color = if (ui.faceFound) Color(0xFF66FF99) else Color(0xFFFF6666),
-                    )
-                    Text("%.0f fps · %s".format(ui.fps, if (ui.gpu) "GPU" else "CPU"), fontSize = 12.sp)
-                    Text(
-                        "cabeza p%.0f° y%.0f° r%.0f°".format(ui.headRot[0], ui.headRot[1], ui.headRot[2]),
-                        fontSize = 12.sp,
-                    )
+                    if (s.showPreview) AndroidView({ previewView }, Modifier.fillMaxWidth().height(280.dp))
+                    StatusOverlay(ui, Modifier.align(Alignment.TopStart).padding(8.dp))
+                }
+                if (ui.message.isNotEmpty()) {
+                    Text(ui.message, Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.primary)
                 }
             }
-            if (ui.message.isNotEmpty()) {
-                Text(ui.message, Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.primary)
+        }
+
+        // ---------- Calibración guiada
+        item { CalibrationCard(ui, vm) }
+
+        // ---------- Ajuste fino
+        item {
+            Section("Ajuste fino de expresiones") {
+                Text("Multiplicá la intensidad de cada grupo después de calibrar.", fontSize = 12.sp)
+                GainSlider("Ojos (parpadeo)", s.gainEyes) { v -> vm.update { it.copy(gainEyes = v) } }
+                GainSlider("Cejas", s.gainBrows) { v -> vm.update { it.copy(gainBrows = v) } }
+                GainSlider("Boca abierta", s.gainMouthOpen) { v -> vm.update { it.copy(gainMouthOpen = v) } }
+                GainSlider("Sonrisa", s.gainSmile) { v -> vm.update { it.copy(gainSmile = v) } }
+                GainSlider("Cachetes inflados", s.gainCheeks) { v -> vm.update { it.copy(gainCheeks = v) } }
+                GainSlider("Lengua", s.gainTongue) { v -> vm.update { it.copy(gainTongue = v) } }
+                Text("Suavizado: %.0f%%".format(s.smoothing * 100), fontSize = 13.sp)
+                Slider(s.smoothing, { v -> vm.update { it.copy(smoothing = v) } })
+                ToggleRow("Auto-rango para gestos sin calibrar", s.autoRange) { v -> vm.update { it.copy(autoRange = v) } }
             }
-        } }
+        }
 
         // ---------- Lengua
         item {
-            Section("Lengua (experimental)") {
+            Section("Lengua") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("tongueOut %.2f".format(ui.tongueValue))
@@ -101,42 +126,38 @@ fun MainScreen(vm: TrackingViewModel) {
                             progress = { ui.tongueValue },
                             modifier = Modifier.fillMaxWidth().height(10.dp).padding(vertical = 2.dp),
                         )
-                        Text(
-                            "señal %.2f  (f0 %.2f → f1 %.2f)".format(ui.tongueFeature, ui.tongueF0, ui.tongueF1),
-                            fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-                        )
+                        Text("señal cruda %.2f".format(ui.tongueFeature), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                     }
                     ui.tongueDebug?.let {
                         Spacer(Modifier.width(8.dp))
                         Image(it, null, Modifier.size(96.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Fit)
                     }
                 }
-                Text(
-                    "Calibrá en este orden, con buena luz de frente:",
-                    fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ vm.calibrateTongue(1) }, Modifier.weight(1f)) { Text("1. Boca abierta", fontSize = 12.sp) }
-                    OutlinedButton({ vm.calibrateTongue(2) }, Modifier.weight(1f)) { Text("2. Lengua afuera", fontSize = 12.sp) }
+                ToggleRow("Ver recorte de la boca (verde = lengua)", s.showTongueDebug) { v ->
+                    vm.update { it.copy(showTongueDebug = v) }
                 }
-                ToggleRow("Mostrar recorte de depuración", s.showTongueDebug) { v -> vm.update { it.copy(showTongueDebug = v) } }
             }
         }
 
-        // ---------- Calibración
+        // ---------- Rendimiento
         item {
-            Section("Calibración de cara") {
-                Text(
-                    if (ui.neutralCalibrated) "Neutral calibrado ✓" else "Sin calibrar: la pose y los gestos pueden quedar desplazados",
-                    fontSize = 13.sp,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button({ vm.calibrateNeutral() }, Modifier.weight(1f)) { Text("Calibrar neutral") }
-                    OutlinedButton({ vm.resetAutoRange() }, Modifier.weight(1f)) { Text("Reiniciar rango") }
+            Section("Rendimiento") {
+                Text("Resolución de análisis (menos = más fps)", fontSize = 13.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Baja", "Media", "Alta").forEachIndexed { i, label ->
+                        FilterChip(
+                            selected = s.resolution == i,
+                            onClick = { vm.update { it.copy(resolution = i) } },
+                            label = { Text(label) },
+                        )
+                    }
                 }
-                ToggleRow("Auto-rango (estira cada gesto hasta 100%)", s.autoRange) { v -> vm.update { it.copy(autoRange = v) } }
-                Text("Suavizado: %.0f%%".format(s.smoothing * 100), fontSize = 13.sp)
-                Slider(s.smoothing, { v -> vm.update { it.copy(smoothing = v) } })
+                ToggleRow("Mostrar cámara (apagarla da más fps)", s.showPreview) { v -> vm.update { it.copy(showPreview = v) } }
+                ToggleRow("Usar GPU (requiere reiniciar la app)", s.useGpu) { v -> vm.update { it.copy(useGpu = v) } }
+                Text(
+                    "Si con GPU va lento, probá desactivarla: en algunos teléfonos la CPU es más rápida.",
+                    fontSize = 12.sp,
+                )
             }
         }
 
@@ -148,7 +169,6 @@ fun MainScreen(vm: TrackingViewModel) {
                     "IP de este teléfono: ${ui.phoneIps.joinToString().ifEmpty { "sin red" }}  ·  puerto ${IFacialMocapServer.PORT}",
                     fontSize = 13.sp,
                 )
-                Text("Escribí esa IP en el programa de la PC eligiendo \"iFacialMocap\".", fontSize = 12.sp)
                 EditableField("IP fija de la PC (opcional)", s.ifmTargetIp) { v -> vm.update { it.copy(ifmTargetIp = v) } }
                 StatusText(ui.ifmStatus)
             }
@@ -167,7 +187,7 @@ fun MainScreen(vm: TrackingViewModel) {
             }
         }
 
-        // ---------- Ajustes de ejes
+        // ---------- Ejes
         item {
             Section("Ejes y orientación") {
                 ToggleRow("Intercambiar izquierda/derecha", s.swapLeftRight) { v -> vm.update { it.copy(swapLeftRight = v) } }
@@ -176,22 +196,104 @@ fun MainScreen(vm: TrackingViewModel) {
                 ToggleRow("Invertir inclinación (roll)", s.invertRoll) { v -> vm.update { it.copy(invertRoll = v) } }
                 ToggleRow("Invertir ojos horizontal", s.invertEyesX) { v -> vm.update { it.copy(invertEyesX = v) } }
                 ToggleRow("Invertir ojos vertical", s.invertEyesY) { v -> vm.update { it.copy(invertEyesY = v) } }
-                ToggleRow("Usar GPU (requiere reiniciar)", s.useGpu) { v -> vm.update { it.copy(useGpu = v) } }
             }
         }
 
-        // ---------- Blendshapes
-        item { Text("Blendshapes ARKit (52)", style = MaterialTheme.typography.titleMedium) }
-        items(ArKit.COUNT) { i ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(ArKit.NAMES[i], Modifier.width(170.dp), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                LinearProgressIndicator(
-                    progress = { ui.blend[i] },
-                    modifier = Modifier.weight(1f).height(8.dp),
-                    color = if (i == ArKit.TONGUE_OUT) Color(0xFFFF6699) else MaterialTheme.colorScheme.primary,
-                )
+        // ---------- Blendshapes (oculto por defecto: dibujar 52 barras cuesta fps)
+        item {
+            ToggleRow("Ver los 52 blendshapes", s.showBlendshapes) { v -> vm.update { it.copy(showBlendshapes = v) } }
+        }
+        if (s.showBlendshapes) {
+            items(ArKit.COUNT) { i ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(ArKit.NAMES[i], Modifier.width(170.dp), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    LinearProgressIndicator(
+                        progress = { ui.blend[i] },
+                        modifier = Modifier.weight(1f).height(8.dp),
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun StatusOverlay(ui: UiState, modifier: Modifier) {
+    Column(modifier.background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(8.dp)) {
+        Text(
+            if (ui.faceFound) "● Cara detectada" else "○ Sin cara",
+            color = if (ui.faceFound) Color(0xFF66FF99) else Color(0xFFFF6666),
+        )
+        Text(
+            "%.0f fps · %.0f ms · %s".format(ui.fps, ui.processMs, if (ui.gpu) "GPU" else "CPU"),
+            fontSize = 12.sp, color = Color.White,
+        )
+        Text(
+            "cabeza p%.0f° y%.0f° r%.0f°".format(ui.headRot[0], ui.headRot[1], ui.headRot[2]),
+            fontSize = 12.sp, color = Color.White,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun CalibrationCard(ui: UiState, vm: TrackingViewModel) {
+    val step = ui.wizardStep
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = if (step != null) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        else CardDefaults.cardColors(),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Calibración de expresiones", style = MaterialTheme.typography.titleMedium)
+            if (step == null) {
+                val n = ui.calibratedSteps.size
+                Text(
+                    if (n == 0) "Sin calibrar. Hacelo una vez: tarda menos de un minuto y adapta todo a tu cara."
+                    else "$n de ${CalibStep.entries.size} pasos calibrados. Tocá un paso para repetirlo.",
+                    fontSize = 13.sp,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CalibStep.entries.forEach { st ->
+                        AssistChip(
+                            onClick = { vm.openStep(st) },
+                            label = { Text((if (st in ui.calibratedSteps) "✓ " else "") + st.title, fontSize = 12.sp) },
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button({ vm.startWizard() }, Modifier.weight(1f)) { Text(if (n == 0) "Empezar" else "Recalibrar todo") }
+                    if (n > 0) OutlinedButton({ vm.resetCalibration() }) { Text("Borrar") }
+                }
+            } else {
+                Text("Paso ${step.ordinal + 1} de ${CalibStep.entries.size}: ${step.title}", fontWeight = FontWeight.Bold)
+                Text(step.instruction, fontSize = 15.sp)
+                val p = ui.captureProgress
+                when {
+                    p < 0f -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button({ vm.captureCurrent() }, Modifier.weight(1f)) { Text("Capturar") }
+                        TextButton({ vm.skipStep() }) { Text("Saltar") }
+                        TextButton({ vm.closeWizard() }) { Text("Cerrar") }
+                    }
+                    p < 1f -> {
+                        Text("Preparate y mantené el gesto…", fontSize = 13.sp)
+                        LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
+                    }
+                    else -> {
+                        Text("Midiendo… ¡no te muevas!", fontSize = 13.sp, color = Color(0xFFFFCC00))
+                        LinearProgressIndicator(progress = { p - 1f }, modifier = Modifier.fillMaxWidth(), color = Color(0xFFFFCC00))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GainSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+    Column {
+        Text("$label: %.0f%%".format(value * 100), fontSize = 13.sp)
+        Slider(value, onChange, valueRange = 0.3f..2f)
     }
 }
 

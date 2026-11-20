@@ -1,97 +1,251 @@
 package com.avatarmocap.tracking
 
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.max
+import kotlin.math.min
+
+/** Pasos de la calibración guiada. [shapes] = blendshapes cuyo máximo se aprende en ese paso. */
+enum class CalibStep(val title: String, val instruction: String, val shapes: Array<String>) {
+    NEUTRAL("Cara neutral", "Relajá la cara y mirá a la cámara.", emptyArray()),
+    EYES_CLOSED("Ojos cerrados", "Cerrá los dos ojos, sin apretar.", arrayOf("eyeBlinkLeft", "eyeBlinkRight")),
+    SURPRISE(
+        "Sorpresa", "Subí las cejas y abrí bien los ojos.",
+        arrayOf("eyeWideLeft", "eyeWideRight", "browInnerUp", "browOuterUpLeft", "browOuterUpRight"),
+    ),
+    ANGRY(
+        "Ceño fruncido", "Bajá y juntá las cejas, como enojado.",
+        arrayOf("browDownLeft", "browDownRight", "noseSneerLeft", "noseSneerRight"),
+    ),
+    SMILE(
+        "Sonrisa", "Sonreí bien grande.",
+        arrayOf("mouthSmileLeft", "mouthSmileRight", "cheekSquintLeft", "cheekSquintRight", "mouthDimpleLeft", "mouthDimpleRight"),
+    ),
+    MOUTH_OPEN(
+        "Boca abierta", "Abrí la boca al máximo, SIN sacar la lengua.",
+        arrayOf("jawOpen", "mouthLowerDownLeft", "mouthLowerDownRight", "mouthUpperUpLeft", "mouthUpperUpRight"),
+    ),
+    POUT("Beso", "Poné los labios en \"U\", como para dar un beso.", arrayOf("mouthPucker", "mouthFunnel")),
+    PUFF("Cachetes inflados", "Inflá los cachetes con la boca cerrada.", arrayOf("cheekPuff")),
+    TONGUE("Lengua afuera", "Sacá la lengua hacia abajo lo más que puedas.", emptyArray());
+
+    val indices: IntArray by lazy { IntArray(shapes.size) { ArKit.idx(shapes[it]) } }
+}
 
 /**
- * Calibración por usuario:
- *  1. Neutral: con la cara relajada mirando a la cámara se guarda el valor de reposo de
- *     cada blendshape y la pose de la cabeza. Se resta y se re-escala (0..1).
- *  2. Auto-rango: aprende el máximo real que alcanza cada blendshape en tu cara y lo
- *     estira hasta 1.0 (MediaPipe rara vez llega a 1 en parpadeos, sonrisas, etc.).
+ * Calibración por usuario (estilo VSeeFace):
+ *  - Neutral: valor de reposo de cada blendshape + pose de la cabeza.
+ *  - Expresiones: el máximo real que alcanza cada gesto en TU cara -> se re-escala a 0..1.
+ *    Así la boca no se abre de más ni los ojos quedan a medio cerrar.
+ *  - Lengua (f0/f1) y cachetes (geometría) también se calibran acá.
  *
- * Todo se ejecuta en el hilo de la cámara; las lecturas desde la UI son tolerantes.
+ * La captura de cada paso dura [WARMUP_NS] de preparación + [CAPTURE_NS] midiendo.
  */
 class Calibration {
     val neutral = FloatArray(ArKit.COUNT)
     val neutralHead = FloatArray(6)
-
-    @Volatile
-    var hasNeutral = false
+    /** Máximo calibrado por blendshape (NaN = sin calibrar). */
+    val maxV = FloatArray(ArKit.COUNT) { Float.NaN }
+    @Volatile var puffNeutral = Float.NaN
+    @Volatile var puffMax = Float.NaN
+    @Volatile var tongueF0 = 0.08f
+    @Volatile var tongueF1 = 0.45f
+    @Volatile var hasNeutral = false
         private set
+    val done: MutableSet<CalibStep> = java.util.Collections.synchronizedSet(mutableSetOf())
 
     private val autoMax = FloatArray(ArKit.COUNT)
 
-    private var capLeft = 0
-    private var capN = 0
-    private val capSum = FloatArray(ArKit.COUNT)
-    private val capHead = FloatArray(6)
-
-    var onNeutralDone: (() -> Unit)? = null
+    // ---- Captura
+    @Volatile var capturing: CalibStep? = null
+        private set
+    private var capStart = 0L
+    private val samples = ArrayList<FloatArray>()
+    /** (paso, ok, mensaje) — se llama en el hilo de la cámara. */
+    var onStepDone: ((CalibStep, Boolean, String) -> Unit)? = null
 
     @Synchronized
-    fun startNeutralCapture(frames: Int = 30) {
-        capSum.fill(0f); capHead.fill(0f); capN = 0
-        capLeft = frames
+    fun startCapture(step: CalibStep, nowNanos: Long) {
+        samples.clear()
+        capStart = nowNanos
+        capturing = step
     }
 
-    val isCapturing: Boolean get() = capLeft > 0
+    /** -1 = sin captura; 0..1 = preparación; 1..2 = midiendo. */
+    fun progress(nowNanos: Long): Float {
+        if (capturing == null) return -1f
+        val t = (nowNanos - capStart).toFloat()
+        return if (t < WARMUP_NS) t / WARMUP_NS else 1f + min(1f, (t - WARMUP_NS) / CAPTURE_NS)
+    }
 
     @Synchronized
-    fun feed(raw: FloatArray, head: FloatArray) {
-        if (capLeft <= 0) return
-        for (i in 0 until ArKit.COUNT) capSum[i] += raw[i]
-        for (i in 0 until 6) capHead[i] += head[i]
-        capN++
-        capLeft--
-        if (capLeft == 0 && capN > 0) {
-            for (i in 0 until ArKit.COUNT) neutral[i] = capSum[i] / capN
-            for (i in 0 until 6) neutralHead[i] = capHead[i] / capN
-            hasNeutral = true
-            autoMax.fill(0f)
-            onNeutralDone?.invoke()
+    fun feed(raw: FloatArray, head: FloatArray, puff: Float, tongueFeature: Float, nowNanos: Long) {
+        val step = capturing ?: return
+        val t = nowNanos - capStart
+        if (t < WARMUP_NS) return
+        val s = FloatArray(ArKit.COUNT + 8)
+        System.arraycopy(raw, 0, s, 0, ArKit.COUNT)
+        System.arraycopy(head, 0, s, ArKit.COUNT, 6)
+        s[ArKit.COUNT + 6] = puff
+        s[ArKit.COUNT + 7] = tongueFeature
+        samples.add(s)
+        if (t >= WARMUP_NS + CAPTURE_NS && samples.size >= 5) {
+            capturing = null
+            finish(step)
         }
     }
 
-    fun apply(raw: FloatArray, out: FloatArray, autoRange: Boolean) {
-        for (i in 0 until ArKit.COUNT) {
-            var v = raw[i]
-            if (i != ArKit.TONGUE_OUT) { // la lengua tiene su propia calibración
-                if (hasNeutral) {
-                    val n = neutral[i].coerceAtMost(0.8f)
-                    v = ((v - n) / (1f - n)).coerceIn(0f, 1f)
-                }
-                if (autoRange) {
-                    autoMax[i] = max(autoMax[i] * AUTO_DECAY, v)
-                    v = (v / max(autoMax[i], AUTO_MIN_RANGE)).coerceIn(0f, 1f)
+    private fun col(c: Int) = FloatArray(samples.size) { samples[it][c] }
+
+    private fun finish(step: CalibStep) {
+        val puffCol = ArKit.COUNT + 6
+        val tongueCol = ArKit.COUNT + 7
+        var ok = true
+        var msg = "${step.title} ✓"
+        when (step) {
+            CalibStep.NEUTRAL -> {
+                for (i in 0 until ArKit.COUNT) neutral[i] = mean(col(i))
+                for (i in 0 until 6) neutralHead[i] = mean(col(ArKit.COUNT + i))
+                puffNeutral = mean(col(puffCol))
+                hasNeutral = true
+                autoMax.fill(0f)
+            }
+            CalibStep.TONGUE -> {
+                tongueF1 = upperMean(col(tongueCol))
+                if (tongueF1 - tongueF0 < 0.05f) {
+                    ok = false
+                    msg = "Casi no se distingue la lengua (%.2f vs %.2f). Probá con más luz de frente.".format(tongueF1, tongueF0)
+                    tongueF1 = tongueF0 + 0.15f
                 }
             }
-            out[i] = v
+            else -> {
+                var weak = 0
+                for (i in step.indices) {
+                    val n = if (hasNeutral) neutral[i] else 0f
+                    val top = upperMean(col(i))
+                    if (top - n < MIN_SPAN) weak++
+                    maxV[i] = max(top, n + MIN_SPAN) // nunca amplificar ruido
+                }
+                if (step == CalibStep.MOUTH_OPEN) tongueF0 = mean(col(tongueCol))
+                if (step == CalibStep.PUFF) {
+                    val p = upperMean(col(puffCol))
+                    puffMax = if (!puffNeutral.isNaN()) max(p, puffNeutral + 0.01f) else p
+                }
+                if (weak == step.indices.size && step != CalibStep.PUFF) {
+                    ok = false
+                    msg = "${step.title}: casi no se detectó el gesto. Exageralo un poco más y repetí."
+                }
+            }
+        }
+        if (ok) done.add(step)
+        onStepDone?.invoke(step, ok, msg)
+    }
+
+    fun apply(raw: FloatArray, out: FloatArray, autoRange: Boolean, gains: FloatArray) {
+        for (i in 0 until ArKit.COUNT) {
+            var v: Float
+            if (i == ArKit.TONGUE_OUT) {
+                v = raw[i] // la lengua ya viene calibrada desde el detector
+            } else {
+                val n = if (hasNeutral) min(neutral[i], 0.8f) else 0f
+                val mx = maxV[i]
+                v = when {
+                    !mx.isNaN() -> (raw[i] - n) / max(mx - n, 0.05f)
+                    autoRange -> {
+                        val base = ((raw[i] - n) / (1f - n)).coerceIn(0f, 1f)
+                        autoMax[i] = max(autoMax[i] * AUTO_DECAY, base)
+                        base / max(autoMax[i], AUTO_MIN_RANGE)
+                    }
+                    else -> (raw[i] - n) / (1f - n)
+                }
+            }
+            val g = ArKit.GROUP[i]
+            if (g >= 0) v *= gains[g]
+            out[i] = v.coerceIn(0f, 1f)
         }
     }
 
-    /** Pose de la cabeza relativa a la neutral. Entrada/salida: pitch,yaw,roll (°), x,y,z (cm). */
+    /** Señal 0..1 de cachetes inflados a partir de la geometría. */
+    fun puffSignal(ratio: Float): Float {
+        if (puffNeutral.isNaN()) return 0f
+        val span = if (puffMax.isNaN()) DEFAULT_PUFF_SPAN else max(puffMax - puffNeutral, 0.008f)
+        return ((ratio - puffNeutral) / span).coerceIn(0f, 1f)
+    }
+
     fun relativeHead(head: FloatArray, out: FloatArray) {
         for (i in 0 until 6) out[i] = if (hasNeutral) head[i] - neutralHead[i] else head[i]
         if (!hasNeutral) { out[3] = 0f; out[4] = 0f; out[5] = 0f }
     }
 
-    fun resetAutoRange() = autoMax.fill(0f)
+    fun resetAll() {
+        neutral.fill(0f); neutralHead.fill(0f); maxV.fill(Float.NaN)
+        puffNeutral = Float.NaN; puffMax = Float.NaN
+        tongueF0 = 0.08f; tongueF1 = 0.45f
+        hasNeutral = false
+        done.clear()
+        autoMax.fill(0f)
+    }
 
-    fun serialize(): String =
-        if (!hasNeutral) "" else (neutral.toList() + neutralHead.toList()).joinToString(",")
+    // ---- Persistencia (JSON; NaN se guarda como -1)
+    fun toJson(): String {
+        fun arr(a: FloatArray) = JSONArray().apply { a.forEach { put(if (it.isNaN()) -1.0 else it.toDouble()) } }
+        return JSONObject()
+            .put("v", 2)
+            .put("hasNeutral", hasNeutral)
+            .put("neutral", arr(neutral))
+            .put("neutralHead", arr(neutralHead))
+            .put("max", arr(maxV))
+            .put("puffNeutral", if (puffNeutral.isNaN()) -1.0 else puffNeutral.toDouble())
+            .put("puffMax", if (puffMax.isNaN()) -1.0 else puffMax.toDouble())
+            .put("tongueF0", tongueF0.toDouble())
+            .put("tongueF1", tongueF1.toDouble())
+            .put("done", JSONArray(done.map { it.name }))
+            .toString()
+    }
 
-    fun deserialize(s: String) {
-        val parts = s.split(',').mapNotNull { it.toFloatOrNull() }
-        if (parts.size != ArKit.COUNT + 6) return
-        for (i in 0 until ArKit.COUNT) neutral[i] = parts[i]
-        for (i in 0 until 6) neutralHead[i] = parts[ArKit.COUNT + i]
-        hasNeutral = true
+    fun fromJson(s: String) {
+        if (s.isBlank()) return
+        try {
+            val o = JSONObject(s)
+            fun read(name: String, into: FloatArray, nanIfNeg: Boolean) {
+                val a = o.getJSONArray(name)
+                for (i in into.indices) {
+                    val v = a.getDouble(i).toFloat()
+                    into[i] = if (nanIfNeg && v < 0f) Float.NaN else v
+                }
+            }
+            read("neutral", neutral, false)
+            read("neutralHead", neutralHead, false)
+            read("max", maxV, true)
+            hasNeutral = o.optBoolean("hasNeutral")
+            puffNeutral = o.optDouble("puffNeutral", -1.0).toFloat().let { if (it < 0f) Float.NaN else it }
+            puffMax = o.optDouble("puffMax", -1.0).toFloat().let { if (it < 0f) Float.NaN else it }
+            tongueF0 = o.optDouble("tongueF0", 0.08).toFloat()
+            tongueF1 = o.optDouble("tongueF1", 0.45).toFloat()
+            val d = o.optJSONArray("done")
+            if (d != null) for (i in 0 until d.length()) {
+                runCatching { CalibStep.valueOf(d.getString(i)) }.getOrNull()?.let { done.add(it) }
+            }
+        } catch (e: Exception) {
+            resetAll()
+        }
     }
 
     companion object {
-        /** Decaimiento por cuadro del máximo aprendido (~45 s de vida media a 30 fps). */
+        const val WARMUP_NS = 1_500_000_000L
+        const val CAPTURE_NS = 1_500_000_000L
+        private const val MIN_SPAN = 0.15f
         private const val AUTO_DECAY = 0.9995f
-        /** Nunca amplificar más de 1/0.4 = 2.5x, para no convertir ruido en expresión. */
-        private const val AUTO_MIN_RANGE = 0.4f
+        private const val AUTO_MIN_RANGE = 0.6f
+        private const val DEFAULT_PUFF_SPAN = 0.04f
+
+        private fun mean(a: FloatArray) = if (a.isEmpty()) 0f else a.sum() / a.size
+
+        /** Promedio de la mitad superior: robusto a los primeros cuadros antes de llegar al gesto. */
+        private fun upperMean(a: FloatArray): Float {
+            if (a.isEmpty()) return 0f
+            val s = a.sortedArray()
+            return mean(s.copyOfRange(s.size / 2, s.size))
+        }
     }
 }

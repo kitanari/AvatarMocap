@@ -57,11 +57,12 @@ Requisitos: Android 8.0 (API 26) o más nuevo. Se recomienda un teléfono de gam
 
 ## Uso
 
-**Primero, calibrá:**
-1. Apoyá el teléfono fijo, a la altura de los ojos y a unos 40-60 cm.
-2. **Calibrar neutral**: cara relajada mirando a la cámara.
-3. **Lengua**: tocá *1. Boca abierta* (abrí la boca sin sacar la lengua) y después *2. Lengua afuera*. El recorte de depuración muestra en **verde** lo que se detecta como lengua.
-4. Hacé tus expresiones al máximo un par de veces para que el auto-rango aprenda.
+**Primero, calibrá (una sola vez, menos de un minuto):**
+1. Apoyá el teléfono fijo, a la altura de los ojos y a unos 40-60 cm, con luz de frente.
+2. En **Calibración de expresiones** tocá **Empezar**. Son 9 pasos: neutral, ojos cerrados, sorpresa, ceño fruncido, sonrisa, boca abierta, beso, cachetes inflados y lengua afuera. En cada uno tocá *Capturar*, poné el gesto mientras se llena la barra y mantenelo mientras dice "Midiendo".
+3. Si algún gesto queda muy fuerte o muy débil, ajustalo en **Ajuste fino** (ojos, cejas, boca, sonrisa, cachetes, lengua).
+
+**Si va lento:** en *Rendimiento* bajá la resolución a "Baja", apagá "Mostrar cámara" y probá con y sin GPU. Arriba de la cámara ves los fps y los milisegundos por cuadro.
 
 ### VSeeFace / VNyan / Warudo (modelos VRM)
 - La PC y el teléfono tienen que estar **en la misma red Wi-Fi**.
