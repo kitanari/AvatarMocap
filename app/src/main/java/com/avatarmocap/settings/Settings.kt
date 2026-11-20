@@ -60,8 +60,8 @@ data class AppSettings(
     val mouthSide: Float = 1f,
     /** Límite total de apertura de boca (1 = como un iPhone con la boca bien abierta). */
     val mouthLimit: Float = 0.9f,
-    /** Lleva tu máximo calibrado al rango que manda un iPhone (evita que la boca se rompa). */
-    val iphoneRanges: Boolean = true,
+    /** 0 = automático (idioma del teléfono), 1 = español, 2 = inglés. */
+    val language: Int = 0,
     /** Calibración rápida: solo de frente (sin girar la cabeza). */
     val quickCalibration: Boolean = false,
     /** Enviar a 60 fps interpolando entre cuadros de tracking. */
@@ -122,7 +122,7 @@ class SettingsStore(context: Context) {
             mouthSymmetry = prefs.getFloat("mouthSymmetry", d.mouthSymmetry),
             mouthSide = prefs.getFloat("mouthSide2", d.mouthSide),
             mouthLimit = prefs.getFloat("mouthLimit", d.mouthLimit),
-            iphoneRanges = prefs.getBoolean("iphoneRanges", d.iphoneRanges),
+            language = prefs.getInt("language", d.language),
             quickCalibration = prefs.getBoolean("quickCalibration", d.quickCalibration),
             interpolate = prefs.getBoolean("interpolate", d.interpolate),
             gainEyes = prefs.getFloat("gainEyes", 1f),
@@ -167,7 +167,7 @@ class SettingsStore(context: Context) {
             .putFloat("mouthSymmetry", s.mouthSymmetry)
             .putFloat("mouthSide2", s.mouthSide)
             .putFloat("mouthLimit", s.mouthLimit)
-            .putBoolean("iphoneRanges", s.iphoneRanges)
+            .putInt("language", s.language)
             .putBoolean("quickCalibration", s.quickCalibration)
             .putBoolean("interpolate", s.interpolate)
             .putFloat("gainEyes", s.gainEyes)
@@ -182,6 +182,17 @@ class SettingsStore(context: Context) {
     var calibrationJson: String
         get() = prefs.getString("calibration_v4", "") ?: ""
         set(v) = prefs.edit().putString("calibration_v4", v).apply()
+
+    /** Ajustes manuales por gesto (mín/máx/salida). */
+    var overridesJson: String
+        get() = prefs.getString("overrides", "") ?: ""
+        set(v) = prefs.edit().putString("overrides", v).apply()
+
+    /** Perfiles guardados: nombre -> { calib, ov }. */
+    fun profiles(): org.json.JSONObject =
+        try { org.json.JSONObject(prefs.getString("profiles", "{}") ?: "{}") } catch (e: Exception) { org.json.JSONObject() }
+
+    fun saveProfiles(o: org.json.JSONObject) = prefs.edit().putString("profiles", o.toString()).apply()
 
     var vtsToken: String
         get() = prefs.getString("vtsToken", "") ?: ""

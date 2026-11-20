@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.avatarmocap.i18n.tr
 import com.avatarmocap.ui.MainScreen
 
 class MainActivity : ComponentActivity() {
@@ -67,9 +68,9 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("AvatarMocap necesita la cámara frontal para rastrear tu cara.")
+                Text(tr("AvatarMocap necesita la cámara frontal para rastrear tu cara.", "AvatarMocap needs the front camera to track your face."))
                 Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }, Modifier.padding(top = 16.dp)) {
-                    Text("Dar permiso")
+                    Text(tr("Dar permiso", "Grant permission"))
                 }
             }
         }

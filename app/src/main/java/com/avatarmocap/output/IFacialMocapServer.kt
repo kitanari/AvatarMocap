@@ -1,5 +1,6 @@
 package com.avatarmocap.output
 
+import com.avatarmocap.i18n.tr
 import android.util.Log
 import com.avatarmocap.tracking.ArKit
 import com.avatarmocap.tracking.FaceFrame
@@ -30,7 +31,7 @@ import kotlin.math.roundToInt
 class IFacialMocapServer(manualTargetIp: String) : OutputSink {
 
     override val name = "iFacialMocap"
-    private val _status = MutableStateFlow("Esperando conexión desde la PC (puerto $PORT)…")
+    private val _status = MutableStateFlow(tr("Esperando conexión desde la PC (puerto $PORT)…", "Waiting for the PC to connect (port $PORT)…"))
     override val status: StateFlow<String> = _status
 
     @Volatile private var target: InetAddress? = null
@@ -50,15 +51,15 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
             }
         } catch (e: Exception) {
             Log.e(TAG, "No se pudo abrir el puerto $PORT", e)
-            _status.value = "Error: no se pudo abrir el puerto $PORT (${e.message})"
+            _status.value = tr("Error: no se pudo abrir el puerto $PORT (${e.message})", "Error: couldn't open port $PORT (${e.message})")
         }
         if (manualTargetIp.isNotBlank()) {
             thread(name = "ifm-resolve") {
                 try {
                     target = InetAddress.getByName(manualTargetIp.trim())
-                    _status.value = "Enviando a ${manualTargetIp.trim()}:$PORT (IP fija)"
+                    _status.value = tr("Enviando a ${manualTargetIp.trim()}:$PORT (IP fija)", "Sending to ${manualTargetIp.trim()}:$PORT (fixed IP)")
                 } catch (e: Exception) {
-                    _status.value = "IP inválida: $manualTargetIp"
+                    _status.value = tr("IP inválida: $manualTargetIp", "Invalid IP: $manualTargetIp")
                 }
             }
         }
@@ -76,7 +77,7 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
                     v2 = text.contains("sendDataVersion=v2")
                     if (target != p.address) {
                         target = p.address
-                        _status.value = "Conectado a ${p.address.hostAddress} (${if (v2) "v2" else "v1"})"
+                        _status.value = tr("Conectado a ${p.address.hostAddress} (${if (v2) "v2" else "v1"})", "Connected to ${p.address.hostAddress} (${if (v2) "v2" else "v1"})")
                     }
                 }
             } catch (e: Exception) {
@@ -105,10 +106,10 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
         try {
             s.send(DatagramPacket(bytes, bytes.size, dst, PORT))
             if (++sentCount % 300 == 0L) {
-                _status.value = "Enviando a ${dst.hostAddress}:$PORT · ${sentCount} paquetes"
+                _status.value = tr("Enviando a ${dst.hostAddress}:$PORT · ${sentCount} paquetes", "Sending to ${dst.hostAddress}:$PORT · ${sentCount} packets")
             }
         } catch (e: Exception) {
-            _status.value = "Error enviando: ${e.message}"
+            _status.value = tr("Error enviando: ${e.message}", "Send error: ${e.message}")
         }
     }
 

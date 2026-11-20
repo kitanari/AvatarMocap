@@ -1,5 +1,6 @@
 package com.avatarmocap.output
 
+import com.avatarmocap.i18n.tr
 import com.avatarmocap.tracking.ArKit
 import com.avatarmocap.tracking.FaceFrame
 import com.avatarmocap.tracking.Vrm
@@ -45,17 +46,17 @@ class VmcSender(
 
     init {
         if (manualHost.isNotBlank()) {
-            _status.value = "Resolviendo $manualHost…"
+            _status.value = tr("Resolviendo $manualHost…", "Resolving $manualHost…")
             thread(name = "vmc-resolve") {
                 try {
                     manualTarget = InetAddress.getByName(manualHost.trim())
-                    _status.value = "Enviando a ${manualHost.trim()}:$port"
+                    _status.value = tr("Enviando a ${manualHost.trim()}:$port", "Sending to ${manualHost.trim()}:$port")
                 } catch (e: Exception) {
-                    _status.value = "IP inválida: $manualHost"
+                    _status.value = tr("IP inválida: $manualHost", "Invalid IP: $manualHost")
                 }
             }
         } else {
-            _status.value = "Esperando a que la PC se conecte por iFacialMocap (o poné una IP fija)"
+            _status.value = tr("Esperando a que la PC se conecte por iFacialMocap (o poné una IP fija)", "Waiting for the PC to connect via iFacialMocap (or set a fixed IP)")
         }
     }
 
@@ -88,10 +89,10 @@ class VmcSender(
         try {
             socket.send(DatagramPacket(bytes, bytes.size, dst, port))
             if (++count % 300 == 0L || count == 1L) {
-                _status.value = "Enviando a ${dst.hostAddress}:$port · $count paquetes"
+                _status.value = tr("Enviando a ${dst.hostAddress}:$port · $count paquetes", "Sending to ${dst.hostAddress}:$port · $count packets")
             }
         } catch (e: Exception) {
-            _status.value = "Error enviando: ${e.message}"
+            _status.value = tr("Error enviando: ${e.message}", "Send error: ${e.message}")
         }
     }
 

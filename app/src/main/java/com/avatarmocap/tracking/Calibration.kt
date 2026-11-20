@@ -1,5 +1,6 @@
 package com.avatarmocap.tracking
 
+import com.avatarmocap.i18n.tr
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.EnumMap
@@ -14,61 +15,84 @@ import kotlin.math.min
  *  - [tip]: consejo de cómo posar.
  */
 enum class CalibStep(
-    val title: String,
-    val instruction: String,
-    val tip: String,
+    private val titleEs: String,
+    private val titleEn: String,
+    private val instructionEs: String,
+    private val instructionEn: String,
+    private val tipEs: String,
+    private val tipEn: String,
     val shapes: Array<String> = emptyArray(),
     val viseme: Int = -1,
     val emotion: Int = -1,
     /** false = solo de frente (girar la cabeza no aporta o es incómodo). */
     val multiAngle: Boolean = true,
 ) {
-    NEUTRAL("Neutral", "Cara relajada, boca cerrada, mirando a la cámara.",
-        "Como cuando mirás una pantalla sin pensar en nada."),
-    BLINK("Parpadeo", "Cerrá los dos ojos suavemente.",
+    NEUTRAL("Neutral", "Neutral",
+        "Cara relajada, boca cerrada, mirando a la cámara.", "Relaxed face, mouth closed, looking at the camera.",
+        "Como cuando mirás una pantalla sin pensar en nada.", "Like when you stare at a screen without thinking."),
+    BLINK("Parpadeo", "Blink",
+        "Cerrá los dos ojos suavemente.", "Gently close both eyes.",
         "Sin apretar los párpados. Cerralos apenas tocás Capturar y abrilos a los 4 segundos.",
+        "Don't squeeze. Close them right after tapping Capture and open them after 4 seconds.",
         arrayOf("eyeBlinkLeft", "eyeBlinkRight"), multiAngle = false),
-    A("A", "Decí \"A\" con la boca bien abierta.",
-        "Como en el dentista: mandíbula abajo, lengua quieta adentro.",
+    A("A", "A", "Decí \"A\" con la boca bien abierta.", "Say \"A\" (ah) with your mouth wide open.",
+        "Como en el dentista: mandíbula abajo, lengua quieta adentro.", "Like at the dentist: jaw down, tongue resting inside.",
         arrayOf("jawOpen", "mouthLowerDownLeft", "mouthLowerDownRight", "mouthUpperUpLeft", "mouthUpperUpRight"), viseme = 0),
-    I("I", "Decí \"I\" estirando los labios a los costados.",
-        "Dientes casi juntos, como una sonrisa forzada.",
+    I("I", "I", "Decí \"I\" estirando los labios a los costados.", "Say \"I\" (ee) stretching your lips sideways.",
+        "Dientes casi juntos, como una sonrisa forzada.", "Teeth almost together, like a forced smile.",
         arrayOf("mouthStretchLeft", "mouthStretchRight"), viseme = 1),
-    U("U", "Decí \"U\" con los labios hacia adelante.",
-        "Labios redondos y chiquitos, como para silbar.", arrayOf("mouthPucker"), viseme = 2),
-    E("E", "Decí \"E\" y mantenela.", "Boca entreabierta y un poco estirada.", viseme = 3),
-    O("O", "Decí \"O\" con la boca redonda.", "Más abierta que la U, como un aro.", arrayOf("mouthFunnel"), viseme = 4),
-    JOY("Alegría (Joy)", "Sonreí bien grande.", "Que se te achinen un poco los ojos, como una sonrisa real.",
+    U("U", "U", "Decí \"U\" con los labios hacia adelante.", "Say \"U\" (oo) pushing your lips forward.",
+        "Labios redondos y chiquitos, como para silbar.", "Small round lips, like whistling.", arrayOf("mouthPucker"), viseme = 2),
+    E("E", "E", "Decí \"E\" y mantenela.", "Say \"E\" (eh) and hold it.",
+        "Boca entreabierta y un poco estirada.", "Mouth half open and slightly stretched.", viseme = 3),
+    O("O", "O", "Decí \"O\" con la boca redonda.", "Say \"O\" (oh) with a round mouth.",
+        "Más abierta que la U, como un aro.", "More open than U, like a ring.", arrayOf("mouthFunnel"), viseme = 4),
+    JOY("Alegría (Joy)", "Joy", "Sonreí bien grande.", "Give a big smile.",
+        "Que se te achinen un poco los ojos, como una sonrisa real.", "Let your eyes narrow a bit, like a real smile.",
         arrayOf("mouthSmileLeft", "mouthSmileRight", "cheekSquintLeft", "cheekSquintRight", "mouthDimpleLeft", "mouthDimpleRight"),
         emotion = 0),
-    ANGRY("Enojo (Angry)", "Fruncí el ceño: cejas abajo y juntas.", "Podés arrugar un poco la nariz.",
+    ANGRY("Enojo (Angry)", "Angry", "Fruncí el ceño: cejas abajo y juntas.", "Frown: brows down and together.",
+        "Podés arrugar un poco la nariz.", "You can wrinkle your nose a little.",
         arrayOf("browDownLeft", "browDownRight", "noseSneerLeft", "noseSneerRight"), emotion = 1),
-    SORROW("Tristeza (Sorrow)", "Cejas arriba en el centro y comisuras hacia abajo.",
-        "Como un \"pobrecito\": el centro de las cejas sube.",
+    SORROW("Tristeza (Sorrow)", "Sorrow", "Cejas arriba en el centro y comisuras hacia abajo.",
+        "Inner brows up and mouth corners down.",
+        "Como un \"pobrecito\": el centro de las cejas sube.", "Like a sad puppy: the inner brows go up.",
         arrayOf("browInnerUp", "mouthFrownLeft", "mouthFrownRight"), emotion = 2),
-    FUN("Diversión (Fun)", "Sonrisa suave con la boca cerrada y ojos relajados.",
-        "Más tranquila que Alegría: media sonrisa.", emotion = 3),
-    SURPRISED("Sorpresa", "Cejas arriba y ojos bien abiertos.", "Sin abrir la boca (o apenas).",
+    FUN("Diversión (Fun)", "Fun", "Sonrisa suave con la boca cerrada y ojos relajados.",
+        "Soft closed-mouth smile with relaxed eyes.",
+        "Más tranquila que Alegría: media sonrisa.", "Calmer than Joy: a half smile.", emotion = 3),
+    SURPRISED("Sorpresa", "Surprised", "Cejas arriba y ojos bien abiertos.", "Brows up and eyes wide open.",
+        "Sin abrir la boca (o apenas).", "Keep your mouth closed (or barely open).",
         arrayOf("eyeWideLeft", "eyeWideRight", "browOuterUpLeft", "browOuterUpRight"), emotion = 4),
-    MOUTH_LEFT("Boca a tu izquierda", "Mové la boca (labios juntos) hacia TU IZQUIERDA.",
-        "Solo los labios, sin girar la cabeza.", arrayOf("mouthLeft"), multiAngle = false),
-    MOUTH_RIGHT("Boca a tu derecha", "Mové la boca (labios juntos) hacia TU DERECHA.",
-        "Solo los labios, sin girar la cabeza.", arrayOf("mouthRight"), multiAngle = false),
-    PUFF("Cachetes inflados", "Inflá los cachetes con la boca cerrada.", "Como un pez globo, sin mover la boca a los costados.",
+    MOUTH_LEFT("Boca a tu izquierda", "Mouth to your left",
+        "Mové la boca (labios juntos) hacia TU IZQUIERDA.", "Move your mouth (lips together) to YOUR LEFT.",
+        "Solo los labios, sin girar la cabeza.", "Only your lips, don't turn your head.", arrayOf("mouthLeft"), multiAngle = false),
+    MOUTH_RIGHT("Boca a tu derecha", "Mouth to your right",
+        "Mové la boca (labios juntos) hacia TU DERECHA.", "Move your mouth (lips together) to YOUR RIGHT.",
+        "Solo los labios, sin girar la cabeza.", "Only your lips, don't turn your head.", arrayOf("mouthRight"), multiAngle = false),
+    PUFF("Cachetes inflados", "Puffed cheeks", "Inflá los cachetes con la boca cerrada.", "Puff your cheeks with your mouth closed.",
+        "Como un pez globo, sin mover la boca a los costados.", "Like a pufferfish, without moving your mouth sideways.",
         arrayOf("cheekPuff")),
-    TONGUE("Lengua afuera", "Sacá la lengua hacia abajo lo más que puedas.",
-        "Con luz de frente. La app aprende el color de tu lengua.", multiAngle = false);
+    TONGUE("Lengua afuera", "Tongue out", "Sacá la lengua hacia abajo lo más que puedas.",
+        "Stick your tongue out and down as far as you can.",
+        "Con luz de frente. La app aprende el color de tu lengua.", "With light in front. The app learns your tongue color.",
+        multiAngle = false);
 
+    val title: String get() = tr(titleEs, titleEn)
+    val instruction: String get() = tr(instructionEs, instructionEn)
+    val tip: String get() = tr(tipEs, tipEn)
     val indices: IntArray by lazy { IntArray(shapes.size) { ArKit.idx(shapes[it]) } }
 }
 
 /** Ángulos en los que se repite cada gesto. */
-enum class Pose(val prompt: String) {
-    CENTER("Mirá DE FRENTE a la cámara"),
-    LEFT("Girá la cabeza hacia TU IZQUIERDA"),
-    RIGHT("Girá la cabeza hacia TU DERECHA"),
-    UP("Levantá la cabeza: mirá hacia ARRIBA"),
-    DOWN("Bajá la cabeza: mirá hacia ABAJO"),
+enum class Pose(private val es: String, private val en: String) {
+    CENTER("Mirá DE FRENTE a la cámara", "Look STRAIGHT at the camera"),
+    LEFT("Girá la cabeza hacia TU IZQUIERDA", "Turn your head to YOUR LEFT"),
+    RIGHT("Girá la cabeza hacia TU DERECHA", "Turn your head to YOUR RIGHT"),
+    UP("Levantá la cabeza: mirá hacia ARRIBA", "Tilt your head UP"),
+    DOWN("Bajá la cabeza: mirá hacia ABAJO", "Tilt your head DOWN");
+
+    val prompt: String get() = tr(es, en)
 }
 
 /** Lo capturado en un paso, en un ángulo. */
@@ -136,6 +160,36 @@ class Calibration {
     private val tables = EnumMap<Pose, PoseTable>(Pose::class.java)
 
     private val autoMax = FloatArray(ArKit.COUNT)
+
+    // ---- Ajustes manuales por gesto (NaN = automático). Se guardan aparte de la calibración.
+    val ovMin = FloatArray(ArKit.COUNT) { Float.NaN }
+    val ovMax = FloatArray(ArKit.COUNT) { Float.NaN }
+    val ovOut = FloatArray(ArKit.COUNT) { Float.NaN }
+
+    fun outMax(i: Int): Float = if (ovOut[i].isNaN()) ArKit.DEFAULT_OUT[i] else ovOut[i]
+    /** Mínimo efectivo (reposo) del gesto ahora mismo. */
+    fun effMin(i: Int): Float = if (!ovMin[i].isNaN()) ovMin[i] else if (hasNeutral) min(neutral[i], 0.8f) else 0f
+    /** Máximo efectivo del gesto ahora mismo (NaN = sin calibrar). */
+    fun effMax(i: Int): Float = if (!ovMax[i].isNaN()) ovMax[i] else maxV[i]
+
+    fun overridesJson(): String {
+        fun arr(a: FloatArray) = JSONArray().apply { a.forEach { put(if (it.isNaN()) -999.0 else it.toDouble()) } }
+        return JSONObject().put("min", arr(ovMin)).put("max", arr(ovMax)).put("out", arr(ovOut)).toString()
+    }
+
+    fun overridesFromJson(s: String) {
+        ovMin.fill(Float.NaN); ovMax.fill(Float.NaN); ovOut.fill(Float.NaN)
+        if (s.isBlank()) return
+        try {
+            val o = JSONObject(s)
+            for ((k, a) in listOf("min" to ovMin, "max" to ovMax, "out" to ovOut)) {
+                val ja = o.optJSONArray(k) ?: continue
+                for (i in 0 until minOf(ja.length(), a.size)) {
+                    val v = ja.getDouble(i).toFloat(); a[i] = if (v <= -998f) Float.NaN else v
+                }
+            }
+        } catch (e: Exception) { /* se ignoran ajustes corruptos */ }
+    }
 
     /** Puntos rígidos de la cara neutral (para la pose de cabeza sin influencia de la boca). */
     @Volatile var rigidRef: FloatArray? = null
@@ -220,7 +274,7 @@ class Calibration {
         }
         val center = bins[Pose.CENTER]
         if (center == null) {
-            onStepDone?.invoke(step, false, "No se vio tu cara de frente. Repetí ${step.title}.")
+            onStepDone?.invoke(step, false, tr("No se vio tu cara de frente. Repetí ${step.title}.", "Your face wasn't seen from the front. Repeat ${step.title}."))
             return
         }
         // Ángulos en los que no giraste lo suficiente: se descartan (se usa el de frente)
@@ -237,43 +291,43 @@ class Calibration {
             if (step == CalibStep.NEUTRAL && rigidN > 0) rigidRef = FloatArray(rigidSum.size) { rigidSum[it] / rigidN }
             recompute()
         }
-        val extra = if (ok && weakPoses > 0) " (en $weakPoses ángulo(s) casi no giraste la cabeza; se usó el de frente)" else ""
+        val extra = if (ok && weakPoses > 0) tr(" (en $weakPoses ángulo(s) casi no giraste la cabeza; se usó el de frente)", " (you barely turned your head in $weakPoses angle(s); the front one was used)") else ""
         onStepDone?.invoke(step, ok, msg + extra)
     }
 
     private fun validate(step: CalibStep, d: BinData): Pair<Boolean, String> {
-        if (step == CalibStep.NEUTRAL) return true to "Neutral ✓"
-        val n = steps[CalibStep.NEUTRAL]?.get(Pose.CENTER) ?: return false to "Primero calibrá \"Neutral\"."
+        if (step == CalibStep.NEUTRAL) return true to "${step.title} ✓"
+        val n = steps[CalibStep.NEUTRAL]?.get(Pose.CENTER) ?: return false to tr("Primero calibrá \"Neutral\".", "Calibrate \"Neutral\" first.")
         when (step) {
             CalibStep.BLINK -> {
                 val dl = n.featMean[Feat.EAR_L] - d.featMean[Feat.EAR_L]
                 val dr = n.featMean[Feat.EAR_R] - d.featMean[Feat.EAR_R]
-                if (dl < 0.03f || dr < 0.03f) return false to "No se detectaron los ojos cerrados. Repetí con más luz."
+                if (dl < 0.03f || dr < 0.03f) return false to tr("No se detectaron los ojos cerrados. Repetí con más luz.", "Closed eyes weren't detected. Repeat with more light.")
             }
             CalibStep.TONGUE -> {
                 val f0 = steps[CalibStep.A]?.get(Pose.CENTER)?.featMean?.get(Feat.TONGUE) ?: tongueF0
                 if (d.featUpper[Feat.TONGUE] - f0 < 0.05f || d.featMean[Feat.TONGUE_CR].isNaN()) {
-                    return false to "Casi no se distingue la lengua. Sacala más, hacia abajo, con luz de frente."
+                    return false to tr("Casi no se distingue la lengua. Sacala más, hacia abajo, con luz de frente.", "The tongue is hard to see. Stick it out further, downward, with light in front.")
                 }
             }
             CalibStep.MOUTH_LEFT, CalibStep.MOUTH_RIGHT -> {
                 val dx = d.featMean[Feat.MOUTH_X] - n.featMean[Feat.MOUTH_X]
                 val okDir = if (step == CalibStep.MOUTH_LEFT) dx > 0.015f else dx < -0.015f
                 if (dx.isNaN() || !okDir) {
-                    return false to "No se notó la boca moviéndose a ese lado. Movela más (sin girar la cabeza)."
+                    return false to tr("No se notó la boca moviéndose a ese lado. Movela más (sin girar la cabeza).", "The mouth didn't move to that side. Move it more (without turning your head).")
                 }
             }
             CalibStep.PUFF -> {
                 val pl = d.featUpper[Feat.PUFF_L] - n.featMean[Feat.PUFF_L]
                 val pr = d.featUpper[Feat.PUFF_R] - n.featMean[Feat.PUFF_R]
                 if (min(pl, pr) < 0.004f && d.upper[ArKit.CHEEK_PUFF] - n.mean[ArKit.CHEEK_PUFF] < 0.1f) {
-                    return false to "No se notó el inflado. Inflá más los cachetes."
+                    return false to tr("No se notó el inflado. Inflá más los cachetes.", "No puff detected. Puff your cheeks more.")
                 }
             }
             else -> {
                 var diff = 0f
                 for (i in 0 until ArKit.COUNT) diff += max(0f, d.mean[i] - n.mean[i])
-                if (diff < 0.25f) return false to "${step.title}: el gesto casi no cambió. Exageralo un poco más."
+                if (diff < 0.25f) return false to tr("${step.title}: el gesto casi no cambió. Exageralo un poco más.", "${step.title}: the expression barely changed. Exaggerate it a bit more.")
             }
         }
         return true to "${step.title} ✓"
@@ -398,8 +452,8 @@ class Calibration {
     fun apply(raw: FloatArray, out: FloatArray, autoRange: Boolean) {
         for (i in 0 until ArKit.COUNT) {
             if (i == ArKit.TONGUE_OUT) { out[i] = raw[i]; continue }
-            val n = if (hasNeutral) min(neutral[i], 0.8f) else 0f
-            val mx = maxV[i]
+            val n = effMin(i)
+            val mx = effMax(i)
             val v = when {
                 !mx.isNaN() -> (raw[i] - n) / max(mx - n, 0.05f)
                 autoRange -> {

@@ -68,6 +68,9 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
 
     private val feat = FloatArray(Feat.COUNT)
     private val raw = FloatArray(ArKit.COUNT)
+    /** Copia de los blendshapes crudos del último cuadro (para el editor de gestos). */
+    @Volatile var lastRaw: FloatArray = FloatArray(ArKit.COUNT)
+        private set
     private val cal = FloatArray(ArKit.COUNT)
     private val headRel = FloatArray(6)
     private val gz = FloatArray(2)
@@ -120,6 +123,8 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             ArKit.INDEX[c.categoryName()]?.let { raw[it] = c.score() }
         }
 
+        lastRaw = raw.copyOf()
+
         // 2) Medidas propias sobre la malla + lengua
         FaceFeatures.compute(pts, n, w, h, feat)
         tongue.f0 = calibration.tongueF0
@@ -166,8 +171,8 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             val gi = ArKit.GROUP[i]
             if (gi >= 0) cal[i] = (cal[i] * g[gi]).coerceIn(0f, 1f)
         }
-        // Rangos como los de un iPhone: tu máximo calibrado -> el máximo que mandaría ARKit
-        if (s.iphoneRanges) for (i in 0 until ArKit.COUNT) cal[i] *= ArKit.REF_MAX[i]
+        // Salida máxima de cada gesto (por defecto solo se limita la boca; editable por gesto)
+        for (i in 0 until ArKit.COUNT) cal[i] *= calibration.outMax(i)
         MouthFix.apply(cal, s.mouthStable, s.mouthSymmetry, s.mouthSide, s.mouthLimit)
 
         calibration.relativeHead(head, headRel)

@@ -1,5 +1,6 @@
 package com.avatarmocap.output
 
+import com.avatarmocap.i18n.tr
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
@@ -39,7 +40,7 @@ class VTubeStudioPlugin(
 ) : OutputSink {
 
     override val name = "VTube Studio"
-    private val _status = MutableStateFlow("Conectando a $host:$port…")
+    private val _status = MutableStateFlow(tr("Conectando a $host:$port…", "Connecting to $host:$port…"))
     override val status: StateFlow<String> = _status
 
     private val client = OkHttpClient.Builder()
@@ -63,7 +64,7 @@ class VTubeStudioPlugin(
 
     private inner class Listener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            _status.value = "Conectado. Autenticando…"
+            _status.value = tr("Conectado. Autenticando…", "Connected. Authenticating…")
             if (token.isNotEmpty()) authenticate() else requestToken()
         }
 
@@ -74,13 +75,13 @@ class VTubeStudioPlugin(
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             authenticated = false
             if (closed) return
-            _status.value = "Sin conexión (${t.message}). Reintentando en 3 s…"
+            _status.value = tr("Sin conexión (${t.message}). Reintentando en 3 s…", "No connection (${t.message}). Retrying in 3 s…")
             Thread { Thread.sleep(3000); connect() }.start()
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             authenticated = false
-            if (!closed) _status.value = "Conexión cerrada por VTS ($reason)"
+            if (!closed) _status.value = tr("Conexión cerrada por VTS ($reason)", "Connection closed by VTS ($reason)")
         }
     }
 
@@ -95,10 +96,10 @@ class VTubeStudioPlugin(
             "AuthenticationResponse" -> {
                 if (data.optBoolean("authenticated")) {
                     authenticated = true
-                    _status.value = "Autenticado ✓ — enviando tracking"
+                    _status.value = tr("Autenticado ✓ — enviando tracking", "Authenticated ✓ — sending tracking")
                     createCustomParameters()
                 } else {
-                    _status.value = "Token rechazado, pidiendo uno nuevo (aceptá el popup en VTS)…"
+                    _status.value = tr("Token rechazado, pidiendo uno nuevo (aceptá el popup en VTS)…", "Token rejected, requesting a new one (accept the popup in VTS)…")
                     token = ""
                     onNewToken("")
                     requestToken()
@@ -123,7 +124,7 @@ class VTubeStudioPlugin(
     }
 
     private fun requestToken() {
-        _status.value = "Pedí permiso en VTube Studio: aceptá el popup en la PC"
+        _status.value = tr("Pedí permiso en VTube Studio: aceptá el popup en la PC", "Requested access in VTube Studio: accept the popup on the PC")
         request("AuthenticationTokenRequest", JSONObject()
             .put("pluginName", PLUGIN_NAME)
             .put("pluginDeveloper", PLUGIN_DEV))
@@ -178,8 +179,8 @@ class VTubeStudioPlugin(
         put("FacePositionX", frame.headPos[0] * 100f)
         put("FacePositionY", frame.headPos[1] * 100f)
         put("FacePositionZ", frame.headPos[2] * 100f)
-        put("MouthOpen", (b[ArKit.JAW_OPEN] / ArKit.REF_MAX[ArKit.JAW_OPEN]).coerceIn(0f, 1f))
-        val smile = (b[ArKit.SMILE_L] + b[ArKit.SMILE_R]) / (2f * ArKit.REF_MAX[ArKit.SMILE_L])
+        put("MouthOpen", (b[ArKit.JAW_OPEN] / ArKit.DEFAULT_OUT[ArKit.JAW_OPEN]).coerceIn(0f, 1f))
+        val smile = (b[ArKit.SMILE_L] + b[ArKit.SMILE_R]) / 2f
         val frown = (b[ArKit.FROWN_L] + b[ArKit.FROWN_R]) / 2f
         put("MouthSmile", (0.5f + 0.5f * (smile - frown)).coerceIn(0f, 1f))
         put("MouthX", (b[ArKit.MOUTH_RIGHT] - b[ArKit.MOUTH_LEFT]).coerceIn(-1f, 1f))
@@ -194,7 +195,7 @@ class VTubeStudioPlugin(
         put("BrowLeftY", browL.coerceIn(0f, 1f))
         put("BrowRightY", browR.coerceIn(0f, 1f))
         put("Brows", ((browL + browR) / 2f).coerceIn(0f, 1f))
-        put("CheekPuff", (b[ArKit.CHEEK_PUFF] / ArKit.REF_MAX[ArKit.CHEEK_PUFF]).coerceIn(0f, 1f))
+        put("CheekPuff", b[ArKit.CHEEK_PUFF])
         put("TongueOut", b[ArKit.TONGUE_OUT])
 
         // ---- Parámetros personalizados (52 ARKit crudos + lengua)

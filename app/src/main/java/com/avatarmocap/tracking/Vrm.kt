@@ -21,7 +21,9 @@ object Vrm {
     /** Nombres de VRM 1.0. */
     val NAMES_V1 = arrayOf("aa", "ih", "ou", "ee", "oh", "blink", "blinkLeft", "blinkRight", "happy", "angry", "sad", "relaxed", "surprised")
     /** Para mostrar en la app. */
-    val LABELS = arrayOf("A", "I", "U", "E", "O", "Parpadeo", "Parpadeo izq.", "Parpadeo der.", "Alegría", "Enojo", "Tristeza", "Diversión", "Sorpresa")
+    private val LABELS_ES = arrayOf("A", "I", "U", "E", "O", "Parpadeo", "Parpadeo izq.", "Parpadeo der.", "Alegría", "Enojo", "Tristeza", "Diversión", "Sorpresa")
+    private val LABELS_EN = arrayOf("A", "I", "U", "E", "O", "Blink", "Blink L", "Blink R", "Joy", "Angry", "Sorrow", "Fun", "Surprised")
+    val LABELS: Array<String> get() = if (com.avatarmocap.i18n.I18n.english) LABELS_EN else LABELS_ES
 
     private val MOUTH = arrayOf(
         "jawOpen", "mouthFunnel", "mouthPucker", "mouthSmileLeft", "mouthSmileRight",
