@@ -6,7 +6,6 @@ import android.os.SystemClock
 import android.util.Log
 import com.avatarmocap.output.OutputSink
 import com.avatarmocap.settings.AppSettings
-import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import java.io.Closeable
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.max
@@ -22,7 +21,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     private val appContext = context.applicationContext
 
     @Volatile var settings: AppSettings = initial
-        set(value) { field = value; gains = value.gains() }
+        set(value) { field = value; gains = value.gains(); calibration.quickMode = value.quickCalibration }
     @Volatile private var gains: FloatArray = initial.gains()
 
     // ---- MediaPipe + elección automática GPU/CPU
@@ -36,7 +35,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         private set
 
     val tongue = TongueDetector()
-    val calibration = Calibration()
+    val calibration = Calibration().also { it.quickMode = initial.quickCalibration }
     val sinks = CopyOnWriteArrayList<OutputSink>()
 
     var listener: ((FaceFrame, TongueDetector.Result?) -> Unit)? = null
@@ -46,11 +45,14 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     @Volatile var lastDetectMs = 0f
         private set
 
-    /** Todos los puntos (x,y normalizados) para dibujar, o null. */
-    @Volatile var landmarkSnapshot: FloatArray? = null
+    /** Último cuadro para la vista previa: la imagen ANALIZADA + su malla + la lengua (siempre alineadas). */
+    @Volatile var previewFrame: PreviewFrame? = null
         private set
-    @Volatile var imageSize: Long = 0L
-        private set
+    private val previewPool = arrayOfNulls<Bitmap>(3)
+    private var previewIdx = 0
+    private var lastPreviewNanos = 0L
+
+    private val smoother = LandmarkSmoother()
 
     private val feat = FloatArray(Feat.COUNT)
     private val raw = FloatArray(ArKit.COUNT)
@@ -79,7 +81,8 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         val landmarks = result?.faceLandmarks()?.firstOrNull()
         if (result == null || landmarks == null) {
             if (++lostFrames == 10) resetFilters()
-            landmarkSnapshot = null
+            smoother.reset()
+            publishPreview(bitmap, null, null, t0)
             emit(FaceFrame.lost(t0), null)
             lastProcessMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6f
             return
@@ -89,7 +92,9 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
 
         val w = bitmap.width
         val h = bitmap.height
-        if (s.meshMode > 0) snapshot(landmarks, w, h)
+        // Malla suavizada (sin temblor): todo lo geométrico se mide sobre ella
+        val pts = smoother.update(landmarks, t0)
+        val n = smoother.count
 
         // 1) Blendshapes de MediaPipe -> orden ARKit
         raw.fill(0f)
@@ -98,19 +103,26 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         }
 
         // 2) Medidas propias sobre la malla + lengua
-        FaceFeatures.compute(landmarks, w, h, feat)
+        FaceFeatures.compute(pts, n, w, h, feat)
         tongue.f0 = calibration.tongueF0
         tongue.f1 = calibration.tongueF1
-        val t = tongue.process(bitmap, landmarks, s.showTongueDebug)
+        val tc = calibration.tongueColor
+        tongue.setPrototype(tc[0], tc[1], tc[2])
+        val t = tongue.process(bitmap, pts, n, s.showTongueDebug)
         feat[Feat.TONGUE] = t.feature
+        feat[Feat.TONGUE_CR] = t.colorCr
+        feat[Feat.TONGUE_CB] = t.colorCb
+        feat[Feat.TONGUE_Y] = t.colorY
         raw[ArKit.TONGUE_OUT] = t.value
+        if (s.showPreview) publishPreview(bitmap, if (s.meshMode > 0) pts else null, t.hull, t0)
 
         // 3) Pose de la cabeza
         val matrix = result.facialTransformationMatrixes().orElse(null)?.firstOrNull()
         val head = if (matrix != null && matrix.size >= 16) HeadPose.fromMatrix(matrix) else FloatArray(6)
 
-        // 4) Calibración
+        // 4) Calibración (interpolada según hacia dónde mira la cabeza)
         calibration.feed(raw, head, feat, t0)
+        calibration.updatePose(head[0], head[1])
         calibration.apply(raw, cal, s.autoRange)
 
         // 5) Fusión con las medidas geométricas (más lineales y precisas una vez calibradas)
@@ -131,7 +143,9 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             val gi = ArKit.GROUP[i]
             if (gi >= 0) cal[i] = (cal[i] * g[gi]).coerceIn(0f, 1f)
         }
-        MouthFix.apply(cal, s.mouthStable, s.mouthSymmetry, s.mouthSide)
+        // Rangos como los de un iPhone: tu máximo calibrado -> el máximo que mandaría ARKit
+        if (s.iphoneRanges) for (i in 0 until ArKit.COUNT) cal[i] *= ArKit.REF_MAX[i]
+        MouthFix.apply(cal, s.mouthStable, s.mouthSymmetry, s.mouthSide, s.mouthLimit)
 
         calibration.relativeHead(head, headRel)
         var tx = t.x
@@ -266,12 +280,25 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         }
     }
 
-    private fun snapshot(lm: List<NormalizedLandmark>, w: Int, h: Int) {
-        val pts = FloatArray(lm.size * 2)
-        for (i in lm.indices) { pts[i * 2] = lm[i].x(); pts[i * 2 + 1] = lm[i].y() }
-        landmarkSnapshot = pts
-        imageSize = (w.toLong() shl 32) or h.toLong()
+    /** Copia el cuadro analizado (máx. ~20 por segundo) junto con SU malla, para que siempre coincidan. */
+    private fun publishPreview(src: Bitmap, pts: FloatArray?, hull: FloatArray?, nanos: Long) {
+        if (!settings.showPreview || nanos - lastPreviewNanos < 50_000_000L) return
+        lastPreviewNanos = nanos
+        previewIdx = (previewIdx + 1) % previewPool.size
+        var dst = previewPool[previewIdx]
+        if (dst == null || dst.width != src.width || dst.height != src.height) {
+            dst = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+            previewPool[previewIdx] = dst
+        }
+        android.graphics.Canvas(dst!!).drawBitmap(src, 0f, 0f, null)
+        val xy = pts?.let { p ->
+            val n = p.size / 3
+            FloatArray(n * 2) { i -> p[(i / 2) * 3 + (i % 2)] }
+        }
+        previewFrame = PreviewFrame(dst, xy, hull, ++previewSeq)
     }
+
+    private var previewSeq = 0L
 
     private fun emit(frame: FaceFrame, t: TongueDetector.Result?) {
         for (sink in sinks) sink.send(frame)
@@ -284,6 +311,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         vrmFilters.forEach { it.reset() }
         tongueDirFilters.forEach { it.reset() }
         tongue.reset()
+        smoother.reset()
     }
 
     override fun close() {
@@ -306,3 +334,6 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         private fun gateDown(v: Float, start: Float, slope: Float) = (1f - max(0f, v - start) * slope).coerceIn(0f, 1f)
     }
 }
+
+/** Imagen analizada + malla (x,y normalizados) + contorno de la lengua, del MISMO cuadro. */
+class PreviewFrame(val bitmap: Bitmap, val landmarks: FloatArray?, val tongueHull: FloatArray?, val seq: Long)

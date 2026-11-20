@@ -69,6 +69,8 @@ class VmcSender(
         element("/VMC/Ext/OK") { int(1) }
         element("/VMC/Ext/T") { float((System.nanoTime() - start) / 1e9f) }
         for (i in 0 until Vrm.COUNT) element("/VMC/Ext/Blend/Val") { str(names[i]); float(frame.vrm[i]) }
+        // La lengua no es una expresión estándar de VRM: se manda como clip propio "TongueOut"
+        if (!sendArkit) element("/VMC/Ext/Blend/Val") { str("TongueOut"); float(frame.blend[ArKit.TONGUE_OUT]) }
         if (sendArkit) {
             for (i in 0 until ArKit.COUNT) element("/VMC/Ext/Blend/Val") { str(PASCAL[i]); float(frame.blend[i]) }
         }

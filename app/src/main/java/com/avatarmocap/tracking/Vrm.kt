@@ -53,8 +53,8 @@ object Vrm {
         for (i in 0 until ArKit.COUNT) x[i] = max(0f, raw[i] - (if (cal.hasNeutral) cal.neutral[i] else 0f))
 
         // ---- Vocales
-        if (cal.visemeT.any { it != null }) {
-            distribute(cal.visemeT, MOUTH, 3f, 0f)
+        if (cal.hasViseme.any { it }) {
+            distribute(cal.visemeT, cal.hasViseme, MOUTH, 3f, 0f)
             for (k in 0 until 5) out[A + k] = (scores[k] * visemeGain).coerceIn(0f, 1f)
         } else {
             // Sin calibrar: aproximación simple
@@ -71,8 +71,8 @@ object Vrm {
         }
 
         // ---- Emociones (con zona muerta para que no parpadeen)
-        if (cal.emotionT.any { it != null }) {
-            distribute(cal.emotionT, EMOTION, 2f, 0f)
+        if (cal.hasEmotion.any { it }) {
+            distribute(cal.emotionT, cal.hasEmotion, EMOTION, 2f, 0f)
             for (k in 0 until 5) {
                 val w = ((scores[k] - 0.25f) / 0.75f).coerceIn(0f, 1f)
                 out[JOY + k] = (w * emotionGain).coerceIn(0f, 1f)
@@ -92,7 +92,7 @@ object Vrm {
      * Para cada plantilla: intensidad (proyección) × parecido (coseno^p). Después se reparte la
      * intensidad máxima entre las candidatas en proporción a su puntaje al cuadrado.
      */
-    private fun distribute(templates: Array<FloatArray?>, subset: IntArray, p: Float, floor: Float) {
+    private fun distribute(templates: Array<FloatArray>, has: BooleanArray, subset: IntArray, p: Float, floor: Float) {
         var xx = 0f
         for (i in subset) xx += x[i] * x[i]
         val xn = sqrt(xx)
@@ -100,11 +100,11 @@ object Vrm {
         var sumSq = 0f
         for (k in 0 until 5) {
             val t = templates[k]
-            if (t == null || xn < 1e-4f) { scores[k] = 0f; continue }
+            if (!has[k] || xn < 1e-4f) { scores[k] = 0f; continue }
             var xt = 0f; var tt = 0f
             for (i in subset) { xt += x[i] * t[i]; tt += t[i] * t[i] }
             if (tt < 1e-4f) { scores[k] = 0f; continue }
-            val intensity = (xt / tt).coerceIn(0f, 1.2f)
+            val intensity = (xt / tt).coerceIn(0f, 1f)
             val cos = (xt / (xn * sqrt(tt))).coerceIn(0f, 1f)
             val s = max(floor, intensity * Math.pow(cos.toDouble(), p.toDouble()).toFloat())
             scores[k] = s

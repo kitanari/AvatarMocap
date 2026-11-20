@@ -2,6 +2,8 @@ package com.avatarmocap.tracking
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.EnumMap
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -9,131 +11,218 @@ import kotlin.math.min
  * Pasos de la calibración: las expresiones básicas de un modelo VRM + extras.
  *  - [shapes]: blendshapes ARKit cuyo máximo se aprende en ese paso.
  *  - [viseme] / [emotion]: casilla VRM cuya "plantilla" se aprende (o -1).
+ *  - [tip]: consejo de cómo posar.
  */
 enum class CalibStep(
     val title: String,
     val instruction: String,
+    val tip: String,
     val shapes: Array<String> = emptyArray(),
     val viseme: Int = -1,
     val emotion: Int = -1,
+    /** false = solo de frente (girar la cabeza no aporta o es incómodo). */
+    val multiAngle: Boolean = true,
 ) {
-    NEUTRAL("Neutral", "Relajá la cara y mirá al centro de la cámara."),
-    BLINK("Parpadeo", "Cerrá los dos ojos, sin apretar.", arrayOf("eyeBlinkLeft", "eyeBlinkRight")),
-    A("A", "Decí \"A\" con la boca bien abierta y mantenela.",
+    NEUTRAL("Neutral", "Cara relajada, boca cerrada, mirando a la cámara.",
+        "Como cuando mirás una pantalla sin pensar en nada."),
+    BLINK("Parpadeo", "Cerrá los dos ojos suavemente.",
+        "Sin apretar los párpados. Cerralos apenas tocás Capturar y abrilos a los 4 segundos.",
+        arrayOf("eyeBlinkLeft", "eyeBlinkRight"), multiAngle = false),
+    A("A", "Decí \"A\" con la boca bien abierta.",
+        "Como en el dentista: mandíbula abajo, lengua quieta adentro.",
         arrayOf("jawOpen", "mouthLowerDownLeft", "mouthLowerDownRight", "mouthUpperUpLeft", "mouthUpperUpRight"), viseme = 0),
-    I("I", "Decí \"I\" estirando los labios a los costados.", arrayOf("mouthStretchLeft", "mouthStretchRight"), viseme = 1),
-    U("U", "Decí \"U\" con los labios hacia adelante.", arrayOf("mouthPucker"), viseme = 2),
-    E("E", "Decí \"E\" y mantenela.", viseme = 3),
-    O("O", "Decí \"O\" con la boca redonda.", arrayOf("mouthFunnel"), viseme = 4),
-    JOY("Alegría (Joy)", "Sonreí bien grande.",
+    I("I", "Decí \"I\" estirando los labios a los costados.",
+        "Dientes casi juntos, como una sonrisa forzada.",
+        arrayOf("mouthStretchLeft", "mouthStretchRight"), viseme = 1),
+    U("U", "Decí \"U\" con los labios hacia adelante.",
+        "Labios redondos y chiquitos, como para silbar.", arrayOf("mouthPucker"), viseme = 2),
+    E("E", "Decí \"E\" y mantenela.", "Boca entreabierta y un poco estirada.", viseme = 3),
+    O("O", "Decí \"O\" con la boca redonda.", "Más abierta que la U, como un aro.", arrayOf("mouthFunnel"), viseme = 4),
+    JOY("Alegría (Joy)", "Sonreí bien grande.", "Que se te achinen un poco los ojos, como una sonrisa real.",
         arrayOf("mouthSmileLeft", "mouthSmileRight", "cheekSquintLeft", "cheekSquintRight", "mouthDimpleLeft", "mouthDimpleRight"),
         emotion = 0),
-    ANGRY("Enojo (Angry)", "Fruncí el ceño: cejas abajo y juntas.",
+    ANGRY("Enojo (Angry)", "Fruncí el ceño: cejas abajo y juntas.", "Podés arrugar un poco la nariz.",
         arrayOf("browDownLeft", "browDownRight", "noseSneerLeft", "noseSneerRight"), emotion = 1),
     SORROW("Tristeza (Sorrow)", "Cejas arriba en el centro y comisuras hacia abajo.",
+        "Como un \"pobrecito\": el centro de las cejas sube.",
         arrayOf("browInnerUp", "mouthFrownLeft", "mouthFrownRight"), emotion = 2),
-    FUN("Diversión (Fun)", "Sonrisa suave con la boca cerrada y ojos relajados.", emotion = 3),
-    SURPRISED("Sorpresa", "Cejas arriba y ojos bien abiertos.",
+    FUN("Diversión (Fun)", "Sonrisa suave con la boca cerrada y ojos relajados.",
+        "Más tranquila que Alegría: media sonrisa.", emotion = 3),
+    SURPRISED("Sorpresa", "Cejas arriba y ojos bien abiertos.", "Sin abrir la boca (o apenas).",
         arrayOf("eyeWideLeft", "eyeWideRight", "browOuterUpLeft", "browOuterUpRight"), emotion = 4),
-    PUFF("Cachetes inflados", "Inflá los cachetes con la boca cerrada.", arrayOf("cheekPuff")),
-    TONGUE("Lengua afuera", "Sacá la lengua hacia abajo lo más que puedas.");
+    PUFF("Cachetes inflados", "Inflá los cachetes con la boca cerrada.", "Como un pez globo, sin mover la boca a los costados.",
+        arrayOf("cheekPuff")),
+    TONGUE("Lengua afuera", "Sacá la lengua hacia abajo lo más que puedas.",
+        "Con luz de frente. La app aprende el color de tu lengua.", multiAngle = false);
 
     val indices: IntArray by lazy { IntArray(shapes.size) { ArKit.idx(shapes[it]) } }
 }
 
-/** Lo capturado en un paso. */
-class StepData(
-    val mean: FloatArray,      // 52 blendshapes crudos (promedio)
+/** Ángulos en los que se repite cada gesto. */
+enum class Pose(val prompt: String) {
+    CENTER("Mirá DE FRENTE a la cámara"),
+    LEFT("Girá la cabeza hacia TU IZQUIERDA"),
+    RIGHT("Girá la cabeza hacia TU DERECHA"),
+    UP("Levantá la cabeza: mirá hacia ARRIBA"),
+    DOWN("Bajá la cabeza: mirá hacia ABAJO"),
+}
+
+/** Lo capturado en un paso, en un ángulo. */
+class BinData(
+    val mean: FloatArray,      // 52 blendshapes crudos
     val upper: FloatArray,     // 52 (promedio de la mitad superior)
-    val head: FloatArray,      // 6
+    val head: FloatArray,      // 6: pitch, yaw, roll (°), x, y, z (cm)
     val featMean: FloatArray,  // Feat.COUNT
     val featUpper: FloatArray,
-    val featLower: FloatArray,
 )
 
+/** Estado de una captura en curso, para mostrar en la UI. */
+class CaptureStatus(val pose: Pose?, val phase: Float, val total: Float)
+
 /**
- * Calibración por usuario. Guarda los datos crudos de cada paso y de ahí deriva todo:
- * neutral, máximos por blendshape, parpadeo/boca/mirada geométricos, cachetes, lengua y
- * las plantillas de las expresiones VRM.
+ * Calibración por usuario, por ángulo de la cabeza.
+ *
+ * Cada gesto se graba de frente y girando la cabeza (izquierda, derecha, arriba, abajo) porque
+ * MediaPipe da valores distintos según el ángulo: por ejemplo, mirando hacia abajo los ojos
+ * parecen más cerrados. En tiempo real se interpola entre los ángulos grabados según hacia
+ * dónde esté mirando tu cabeza.
  */
 class Calibration {
-    private val steps = java.util.concurrent.ConcurrentHashMap<CalibStep, StepData>()
+    private val steps = java.util.concurrent.ConcurrentHashMap<CalibStep, EnumMap<Pose, BinData>>()
     val done: Set<CalibStep> get() = steps.keys.toSet()
 
-    // ---- Derivados (se recalculan con recompute())
+    @Volatile var quickMode = false
+
+    // ---- Valores ACTUALES (interpolados según la pose de la cabeza), leídos por el pipeline
     val neutral = FloatArray(ArKit.COUNT)
     val neutralHead = FloatArray(6)
     val maxV = FloatArray(ArKit.COUNT) { Float.NaN }
     val featNeutral = FloatArray(Feat.COUNT) { Float.NaN }
-    val earClosed = floatArrayOf(Float.NaN, Float.NaN)   // L, R
+    val earClosed = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var gapMax = Float.NaN
     val puffMax = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var tongueF0 = 0.08f
     @Volatile var tongueF1 = 0.45f
-    val visemeT = arrayOfNulls<FloatArray>(5)
-    val emotionT = arrayOfNulls<FloatArray>(5)
+    /** Color aprendido de la lengua (Cr, Cb, Y relativos a la piel) o NaN. */
+    val tongueColor = floatArrayOf(Float.NaN, Float.NaN, Float.NaN)
+    val visemeT = Array(5) { FloatArray(ArKit.COUNT) }
+    val emotionT = Array(5) { FloatArray(ArKit.COUNT) }
+    val hasViseme = BooleanArray(5)
+    val hasEmotion = BooleanArray(5)
     @Volatile var hasNeutral = false
         private set
 
+    // ---- Tablas por ángulo (derivadas en recompute)
+    private class PoseTable {
+        val neutral = FloatArray(ArKit.COUNT)
+        val featNeutral = FloatArray(Feat.COUNT) { Float.NaN }
+        val maxV = FloatArray(ArKit.COUNT) { Float.NaN }
+        val earClosed = floatArrayOf(Float.NaN, Float.NaN)
+        var gapMax = Float.NaN
+        val puffMax = floatArrayOf(Float.NaN, Float.NaN)
+        val visemeT = Array(5) { FloatArray(ArKit.COUNT) }
+        val emotionT = Array(5) { FloatArray(ArKit.COUNT) }
+        var head: FloatArray? = null
+    }
+    private val tables = EnumMap<Pose, PoseTable>(Pose::class.java)
+
     private val autoMax = FloatArray(ArKit.COUNT)
 
-    // ---- Captura
+    // ---------- Captura guiada
+
     @Volatile var capturing: CalibStep? = null
         private set
     private var capStart = 0L
-    private val samples = ArrayList<FloatArray>()
+    private var schedule: List<Pair<Pose, Long>> = emptyList()
+    private val samples = EnumMap<Pose, ArrayList<FloatArray>>(Pose::class.java)
     var onStepDone: ((CalibStep, Boolean, String) -> Unit)? = null
 
     @Synchronized
     fun startCapture(step: CalibStep, nowNanos: Long) {
-        samples.clear(); capStart = nowNanos; capturing = step
+        samples.clear()
+        val poses = if (quickMode || !step.multiAngle) listOf(Pose.CENTER) else Pose.entries
+        schedule = poses.map { it to (if (it == Pose.CENTER) CENTER_NS else POSE_NS) }
+        capStart = nowNanos
+        capturing = step
     }
 
-    fun progress(nowNanos: Long): Float {
-        if (capturing == null) return -1f
-        val t = (nowNanos - capStart).toFloat()
-        return if (t < WARMUP_NS) t / WARMUP_NS else 1f + min(1f, (t - WARMUP_NS) / CAPTURE_NS)
+    /** Estado actual de la captura (o null). */
+    fun captureStatus(nowNanos: Long): CaptureStatus? {
+        if (capturing == null) return null
+        val total = PREP_NS + schedule.sumOf { it.second }
+        var t = nowNanos - capStart
+        val totalP = (t.toFloat() / total).coerceIn(0f, 1f)
+        if (t < PREP_NS) return CaptureStatus(null, t.toFloat() / PREP_NS, totalP)
+        t -= PREP_NS
+        for ((pose, dur) in schedule) {
+            if (t < dur) return CaptureStatus(pose, t.toFloat() / dur, totalP)
+            t -= dur
+        }
+        return CaptureStatus(Pose.CENTER, 1f, 1f)
     }
 
     @Synchronized
     fun feed(raw: FloatArray, head: FloatArray, feat: FloatArray, nowNanos: Long) {
         val step = capturing ?: return
-        val t = nowNanos - capStart
-        if (t < WARMUP_NS) return
-        val s = FloatArray(ArKit.COUNT + 6 + Feat.COUNT)
-        System.arraycopy(raw, 0, s, 0, ArKit.COUNT)
-        System.arraycopy(head, 0, s, ArKit.COUNT, 6)
-        System.arraycopy(feat, 0, s, ArKit.COUNT + 6, Feat.COUNT)
-        samples.add(s)
-        if (t >= WARMUP_NS + CAPTURE_NS && samples.size >= 5) {
-            capturing = null
-            finish(step)
+        var t = nowNanos - capStart - PREP_NS
+        if (t < 0) return
+        for ((pose, dur) in schedule) {
+            if (t < dur) {
+                // Se descarta el comienzo de cada ángulo: es el momento en que girás la cabeza
+                if (t >= TRANSITION_NS) {
+                    val s = FloatArray(ArKit.COUNT + 6 + Feat.COUNT)
+                    System.arraycopy(raw, 0, s, 0, ArKit.COUNT)
+                    System.arraycopy(head, 0, s, ArKit.COUNT, 6)
+                    System.arraycopy(feat, 0, s, ArKit.COUNT + 6, Feat.COUNT)
+                    samples.getOrPut(pose) { ArrayList() }.add(s)
+                }
+                return
+            }
+            t -= dur
         }
+        capturing = null
+        finish(step)
     }
-
-    private fun col(c: Int) = FloatArray(samples.size) { samples[it][c] }
 
     private fun finish(step: CalibStep) {
-        val fo = ArKit.COUNT + 6
-        val data = StepData(
-            mean = FloatArray(ArKit.COUNT) { mean(col(it)) },
-            upper = FloatArray(ArKit.COUNT) { upperMean(col(it)) },
-            head = FloatArray(6) { mean(col(ArKit.COUNT + it)) },
-            featMean = FloatArray(Feat.COUNT) { mean(col(fo + it)) },
-            featUpper = FloatArray(Feat.COUNT) { upperMean(col(fo + it)) },
-            featLower = FloatArray(Feat.COUNT) { lowerMean(col(fo + it)) },
-        )
-        val (ok, msg) = validate(step, data)
+        val bins = EnumMap<Pose, BinData>(Pose::class.java)
+        for ((pose, list) in samples) {
+            if (list.size < 3) continue
+            fun col(c: Int) = FloatArray(list.size) { list[it][c] }
+            val fo = ArKit.COUNT + 6
+            bins[pose] = BinData(
+                mean = FloatArray(ArKit.COUNT) { mean(col(it)) },
+                upper = FloatArray(ArKit.COUNT) { upperMean(col(it)) },
+                head = FloatArray(6) { mean(col(ArKit.COUNT + it)) },
+                featMean = FloatArray(Feat.COUNT) { meanFinite(col(fo + it)) },
+                featUpper = FloatArray(Feat.COUNT) { upperMean(col(fo + it)) },
+            )
+        }
+        val center = bins[Pose.CENTER]
+        if (center == null) {
+            onStepDone?.invoke(step, false, "No se vio tu cara de frente. Repetí ${step.title}.")
+            return
+        }
+        // Ángulos en los que no giraste lo suficiente: se descartan (se usa el de frente)
+        val c = center.head
+        var weakPoses = 0
+        for (pose in listOf(Pose.LEFT, Pose.RIGHT, Pose.UP, Pose.DOWN)) {
+            val b = bins[pose] ?: continue
+            val moved = if (pose == Pose.LEFT || pose == Pose.RIGHT) abs(b.head[1] - c[1]) else abs(b.head[0] - c[0])
+            if (moved < MIN_TURN_DEG) { bins.remove(pose); weakPoses++ }
+        }
+        val (ok, msg) = validate(step, center)
         if (ok) {
-            steps[step] = data
+            steps[step] = bins
             recompute()
         }
-        onStepDone?.invoke(step, ok, msg)
+        val extra = if (ok && weakPoses > 0) " (en $weakPoses ángulo(s) casi no giraste la cabeza; se usó el de frente)" else ""
+        onStepDone?.invoke(step, ok, msg + extra)
     }
 
-    private fun validate(step: CalibStep, d: StepData): Pair<Boolean, String> {
+    private fun validate(step: CalibStep, d: BinData): Pair<Boolean, String> {
         if (step == CalibStep.NEUTRAL) return true to "Neutral ✓"
-        val n = steps[CalibStep.NEUTRAL] ?: return false to "Primero calibrá \"Neutral\"."
+        val n = steps[CalibStep.NEUTRAL]?.get(Pose.CENTER) ?: return false to "Primero calibrá \"Neutral\"."
         when (step) {
             CalibStep.BLINK -> {
                 val dl = n.featMean[Feat.EAR_L] - d.featMean[Feat.EAR_L]
@@ -141,9 +230,9 @@ class Calibration {
                 if (dl < 0.03f || dr < 0.03f) return false to "No se detectaron los ojos cerrados. Repetí con más luz."
             }
             CalibStep.TONGUE -> {
-                val f0 = steps[CalibStep.A]?.featMean?.get(Feat.TONGUE) ?: tongueF0
-                if (d.featUpper[Feat.TONGUE] - f0 < 0.05f) {
-                    return false to "Casi no se distingue la lengua. Sacala más y probá con más luz de frente."
+                val f0 = steps[CalibStep.A]?.get(Pose.CENTER)?.featMean?.get(Feat.TONGUE) ?: tongueF0
+                if (d.featUpper[Feat.TONGUE] - f0 < 0.05f || d.featMean[Feat.TONGUE_CR].isNaN()) {
+                    return false to "Casi no se distingue la lengua. Sacala más, hacia abajo, con luz de frente."
                 }
             }
             CalibStep.PUFF -> {
@@ -162,44 +251,113 @@ class Calibration {
         return true to "${step.title} ✓"
     }
 
+    /** Recalcula las tablas por ángulo a partir de lo grabado. */
     @Synchronized
     fun recompute() {
-        val n = steps[CalibStep.NEUTRAL]
-        hasNeutral = n != null
-        if (n != null) {
-            System.arraycopy(n.mean, 0, neutral, 0, ArKit.COUNT)
-            System.arraycopy(n.head, 0, neutralHead, 0, 6)
-            System.arraycopy(n.featMean, 0, featNeutral, 0, Feat.COUNT)
-        } else {
-            neutral.fill(0f); neutralHead.fill(0f); featNeutral.fill(Float.NaN)
+        tables.clear()
+        val neutralBins = steps[CalibStep.NEUTRAL]
+        hasNeutral = neutralBins?.get(Pose.CENTER) != null
+        for (pose in Pose.entries) {
+            val tb = PoseTable()
+            fun bin(step: CalibStep): BinData? = steps[step]?.let { it[pose] ?: it[Pose.CENTER] }
+            val nb = bin(CalibStep.NEUTRAL)
+            if (nb != null) {
+                System.arraycopy(nb.mean, 0, tb.neutral, 0, ArKit.COUNT)
+                System.arraycopy(nb.featMean, 0, tb.featNeutral, 0, Feat.COUNT)
+            }
+            tb.head = neutralBins?.get(pose)?.head
+            for ((step, _) in steps) {
+                val b = bin(step) ?: continue
+                for (i in step.indices) {
+                    val v = max(b.upper[i], tb.neutral[i] + MIN_SPAN)
+                    tb.maxV[i] = if (tb.maxV[i].isNaN()) v else max(tb.maxV[i], v)
+                }
+                if (step.viseme >= 0 || step.emotion >= 0) {
+                    val t = if (step.viseme >= 0) tb.visemeT[step.viseme] else tb.emotionT[step.emotion]
+                    for (i in 0 until ArKit.COUNT) t[i] = max(0f, b.mean[i] - tb.neutral[i])
+                }
+            }
+            bin(CalibStep.BLINK)?.let { tb.earClosed[0] = it.featMean[Feat.EAR_L]; tb.earClosed[1] = it.featMean[Feat.EAR_R] }
+            bin(CalibStep.A)?.let { tb.gapMax = it.featUpper[Feat.GAP] }
+            bin(CalibStep.PUFF)?.let { tb.puffMax[0] = it.featUpper[Feat.PUFF_L]; tb.puffMax[1] = it.featUpper[Feat.PUFF_R] }
+            tables[pose] = tb
         }
-        maxV.fill(Float.NaN)
-        for ((step, d) in steps) for (i in step.indices) {
-            val v = max(d.upper[i], neutral[i] + MIN_SPAN)
-            maxV[i] = if (maxV[i].isNaN()) v else max(maxV[i], v)
+        for (k in 0 until 5) {
+            hasViseme[k] = steps.keys.any { it.viseme == k }
+            hasEmotion[k] = steps.keys.any { it.emotion == k }
         }
-        val b = steps[CalibStep.BLINK]
-        earClosed[0] = b?.featMean?.get(Feat.EAR_L) ?: Float.NaN
-        earClosed[1] = b?.featMean?.get(Feat.EAR_R) ?: Float.NaN
-        gapMax = steps[CalibStep.A]?.featUpper?.get(Feat.GAP) ?: Float.NaN
-        val p = steps[CalibStep.PUFF]
-        puffMax[0] = p?.featUpper?.get(Feat.PUFF_L) ?: Float.NaN
-        puffMax[1] = p?.featUpper?.get(Feat.PUFF_R) ?: Float.NaN
-        tongueF0 = steps[CalibStep.A]?.featMean?.get(Feat.TONGUE) ?: 0.08f
-        tongueF1 = steps[CalibStep.TONGUE]?.featUpper?.get(Feat.TONGUE) ?: max(0.45f, tongueF0 + 0.2f)
-        visemeT.fill(null); emotionT.fill(null)
-        for ((step, d) in steps) {
-            if (step.viseme < 0 && step.emotion < 0) continue
-            val t = FloatArray(ArKit.COUNT) { max(0f, d.mean[it] - neutral[it]) }
-            if (step.viseme >= 0) visemeT[step.viseme] = t
-            if (step.emotion >= 0) emotionT[step.emotion] = t
-        }
+        tongueF0 = steps[CalibStep.A]?.get(Pose.CENTER)?.featMean?.get(Feat.TONGUE) ?: 0.08f
+        val tb = steps[CalibStep.TONGUE]?.get(Pose.CENTER)
+        tongueF1 = tb?.featUpper?.get(Feat.TONGUE) ?: max(0.45f, tongueF0 + 0.2f)
+        tongueColor[0] = tb?.featMean?.get(Feat.TONGUE_CR) ?: Float.NaN
+        tongueColor[1] = tb?.featMean?.get(Feat.TONGUE_CB) ?: Float.NaN
+        tongueColor[2] = tb?.featMean?.get(Feat.TONGUE_Y) ?: Float.NaN
+        val ch = neutralBins?.get(Pose.CENTER)?.head
+        if (ch != null) System.arraycopy(ch, 0, neutralHead, 0, 6) else neutralHead.fill(0f)
         autoMax.fill(0f)
+        updatePose(0f, 0f, force = true)
+    }
+
+    private var lastPitch = Float.NaN
+    private var lastYaw = Float.NaN
+
+    /**
+     * Interpola las tablas según la pose ACTUAL de la cabeza (grados absolutos de MediaPipe):
+     * valor = frente + a·(lateral − frente) + b·(vertical − frente).
+     */
+    @Synchronized
+    fun updatePose(pitch: Float, yaw: Float, force: Boolean = false) {
+        if (!force && abs(pitch - lastPitch) < 0.5f && abs(yaw - lastYaw) < 0.5f) return
+        lastPitch = pitch; lastYaw = yaw
+        val c = tables[Pose.CENTER] ?: return
+        val ch = c.head
+        var side: PoseTable? = null; var a = 0f
+        var vert: PoseTable? = null; var b = 0f
+        if (ch != null) {
+            for (pose in listOf(Pose.LEFT, Pose.RIGHT)) {
+                val t = tables[pose] ?: continue
+                val h = t.head ?: continue
+                val span = h[1] - ch[1]
+                if (abs(span) < MIN_TURN_DEG) continue
+                val f = (yaw - ch[1]) / span
+                if (f > 0f) { side = t; a = f.coerceAtMost(1f) }
+            }
+            for (pose in listOf(Pose.UP, Pose.DOWN)) {
+                val t = tables[pose] ?: continue
+                val h = t.head ?: continue
+                val span = h[0] - ch[0]
+                if (abs(span) < MIN_TURN_DEG) continue
+                val f = (pitch - ch[0]) / span
+                if (f > 0f) { vert = t; b = f.coerceAtMost(1f) }
+            }
+        }
+        fun mix(cv: Float, sv: Float?, vv: Float?): Float {
+            var r = cv
+            if (cv.isNaN()) return cv
+            if (sv != null && !sv.isNaN()) r += a * (sv - cv)
+            if (vv != null && !vv.isNaN()) r += b * (vv - cv)
+            return r
+        }
+        for (i in 0 until ArKit.COUNT) {
+            neutral[i] = mix(c.neutral[i], side?.neutral?.get(i), vert?.neutral?.get(i))
+            maxV[i] = mix(c.maxV[i], side?.maxV?.get(i), vert?.maxV?.get(i))
+        }
+        for (i in 0 until Feat.COUNT) featNeutral[i] = mix(c.featNeutral[i], side?.featNeutral?.get(i), vert?.featNeutral?.get(i))
+        for (k in 0..1) {
+            earClosed[k] = mix(c.earClosed[k], side?.earClosed?.get(k), vert?.earClosed?.get(k))
+            puffMax[k] = mix(c.puffMax[k], side?.puffMax?.get(k), vert?.puffMax?.get(k))
+        }
+        gapMax = mix(c.gapMax, side?.gapMax, vert?.gapMax)
+        for (k in 0 until 5) for (i in 0 until ArKit.COUNT) {
+            visemeT[k][i] = mix(c.visemeT[k][i], side?.visemeT?.get(k)?.get(i), vert?.visemeT?.get(k)?.get(i))
+            emotionT[k][i] = mix(c.emotionT[k][i], side?.emotionT?.get(k)?.get(i), vert?.emotionT?.get(k)?.get(i))
+        }
     }
 
     // ---------- Aplicación en tiempo real
 
-    /** Re-escala cada blendshape entre su neutral y su máximo calibrado. */
+    /** Re-escala cada blendshape entre su neutral y su máximo calibrado (0..1). */
+    @Synchronized
     fun apply(raw: FloatArray, out: FloatArray, autoRange: Boolean) {
         for (i in 0 until ArKit.COUNT) {
             if (i == ArKit.TONGUE_OUT) { out[i] = raw[i]; continue }
@@ -218,7 +376,6 @@ class Calibration {
         }
     }
 
-    /** Parpadeo geométrico 0..1 (k = 0 izq, 1 der), o NaN si no está calibrado. */
     fun blinkGeo(k: Int, ear: Float): Float {
         val open = featNeutral[if (k == 0) Feat.EAR_L else Feat.EAR_R]
         val closed = earClosed[k]
@@ -226,14 +383,12 @@ class Calibration {
         return ((open - ear) / max(open - closed, 0.02f)).coerceIn(0f, 1f)
     }
 
-    /** Apertura de boca geométrica 0..1, o NaN. */
     fun jawGeo(gap: Float): Float {
         val n = featNeutral[Feat.GAP]
         if (n.isNaN() || gapMax.isNaN()) return Float.NaN
         return ((gap - n) / max(gapMax - n, 0.02f)).coerceIn(0f, 1f)
     }
 
-    /** Mirada desde el iris: out = (h, v) en -1..1 relativo a la mirada neutral. */
     fun gaze(feat: FloatArray, left: Boolean, out: FloatArray): Boolean {
         val hi = if (left) Feat.IRIS_HL else Feat.IRIS_HR
         val vi = if (left) Feat.IRIS_VL else Feat.IRIS_VR
@@ -244,7 +399,6 @@ class Calibration {
         return true
     }
 
-    /** Cachetes inflados geométrico: mínimo de ambos lados (al mover la boca solo cambia uno). */
     fun puffSignal(feat: FloatArray): Float {
         var sig = 1f
         val idx = intArrayOf(Feat.PUFF_L, Feat.PUFF_R)
@@ -270,14 +424,18 @@ class Calibration {
     // ---------- Persistencia
 
     fun toJson(): String {
-        fun arr(a: FloatArray) = JSONArray().apply { a.forEach { put(if (it.isNaN()) 0.0 else it.toDouble()) } }
+        fun arr(a: FloatArray) = JSONArray().apply { a.forEach { put(if (it.isNaN()) -999.0 else it.toDouble()) } }
         val st = JSONObject()
-        for ((step, d) in steps) {
-            st.put(step.name, JSONObject()
-                .put("mean", arr(d.mean)).put("upper", arr(d.upper)).put("head", arr(d.head))
-                .put("featMean", arr(d.featMean)).put("featUpper", arr(d.featUpper)).put("featLower", arr(d.featLower)))
+        for ((step, bins) in steps) {
+            val bo = JSONObject()
+            for ((pose, d) in bins) {
+                bo.put(pose.name, JSONObject()
+                    .put("mean", arr(d.mean)).put("upper", arr(d.upper)).put("head", arr(d.head))
+                    .put("featMean", arr(d.featMean)).put("featUpper", arr(d.featUpper)))
+            }
+            st.put(step.name, bo)
         }
-        return JSONObject().put("v", 3).put("steps", st).toString()
+        return JSONObject().put("v", 4).put("steps", st).toString()
     }
 
     fun fromJson(s: String) {
@@ -285,19 +443,28 @@ class Calibration {
         try {
             if (s.isNotBlank()) {
                 val o = JSONObject(s)
-                if (o.optInt("v") == 3) {
+                if (o.optInt("v") == 4) {
                     val st = o.getJSONObject("steps")
                     for (name in st.keys()) {
                         val step = runCatching { CalibStep.valueOf(name) }.getOrNull() ?: continue
-                        val d = st.getJSONObject(name)
-                        fun a(k: String, n: Int): FloatArray {
-                            val ja = d.getJSONArray(k)
-                            return FloatArray(n) { ja.getDouble(it).toFloat() }
+                        val bo = st.getJSONObject(name)
+                        val bins = EnumMap<Pose, BinData>(Pose::class.java)
+                        for (pn in bo.keys()) {
+                            val pose = runCatching { Pose.valueOf(pn) }.getOrNull() ?: continue
+                            val d = bo.getJSONObject(pn)
+                            fun a(k: String, n: Int): FloatArray {
+                                val ja = d.getJSONArray(k)
+                                return FloatArray(n) { i ->
+                                    if (i < ja.length()) ja.getDouble(i).toFloat().let { if (it <= -998f) Float.NaN else it }
+                                    else Float.NaN
+                                }
+                            }
+                            bins[pose] = BinData(
+                                a("mean", ArKit.COUNT), a("upper", ArKit.COUNT), a("head", 6),
+                                a("featMean", Feat.COUNT), a("featUpper", Feat.COUNT),
+                            )
                         }
-                        steps[step] = StepData(
-                            a("mean", ArKit.COUNT), a("upper", ArKit.COUNT), a("head", 6),
-                            a("featMean", Feat.COUNT), a("featUpper", Feat.COUNT), a("featLower", Feat.COUNT),
-                        )
+                        if (bins[Pose.CENTER] != null) steps[step] = bins
                     }
                 }
             }
@@ -308,8 +475,11 @@ class Calibration {
     }
 
     companion object {
-        const val WARMUP_NS = 1_500_000_000L
-        const val CAPTURE_NS = 1_500_000_000L
+        const val PREP_NS = 2_000_000_000L
+        const val CENTER_NS = 1_800_000_000L
+        const val POSE_NS = 1_800_000_000L
+        const val TRANSITION_NS = 700_000_000L
+        private const val MIN_TURN_DEG = 8f
         private const val MIN_SPAN = 0.15f
         private const val AUTO_DECAY = 0.9995f
         private const val AUTO_MIN_RANGE = 0.6f
@@ -318,13 +488,16 @@ class Calibration {
         private const val IRIS_V_RANGE = 0.12f
 
         private fun mean(a: FloatArray) = if (a.isEmpty()) 0f else a.sum() / a.size
-        private fun upperMean(a: FloatArray): Float {
-            if (a.isEmpty()) return 0f
-            val s = a.sortedArray(); return mean(s.copyOfRange(s.size / 2, s.size))
+        /** Promedio ignorando NaN (p.ej. color de lengua cuando no hay lengua). */
+        private fun meanFinite(a: FloatArray): Float {
+            var s = 0f; var n = 0
+            for (v in a) if (!v.isNaN()) { s += v; n++ }
+            return if (n == 0) Float.NaN else s / n
         }
-        private fun lowerMean(a: FloatArray): Float {
-            if (a.isEmpty()) return 0f
-            val s = a.sortedArray(); return mean(s.copyOfRange(0, (s.size + 1) / 2))
+        private fun upperMean(a: FloatArray): Float {
+            val f = a.filter { !it.isNaN() }.sorted()
+            if (f.isEmpty()) return Float.NaN
+            return f.subList(f.size / 2, f.size).average().toFloat()
         }
     }
 }

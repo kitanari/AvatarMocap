@@ -17,6 +17,8 @@ import com.avatarmocap.settings.AppSettings
 import com.avatarmocap.settings.SettingsStore
 import com.avatarmocap.tracking.ArKit
 import com.avatarmocap.tracking.CalibStep
+import com.avatarmocap.tracking.CaptureStatus
+import com.avatarmocap.tracking.PreviewFrame
 import com.avatarmocap.tracking.FaceFrame
 import com.avatarmocap.tracking.TongueDetector
 import com.avatarmocap.tracking.TrackingPipeline
@@ -46,13 +48,10 @@ data class UiState(
     val phoneIps: List<String> = emptyList(),
     // Calibración guiada
     val wizardStep: CalibStep? = null,
-    /** -1 sin captura; 0..1 preparación; 1..2 midiendo. */
-    val captureProgress: Float = -1f,
+    val capture: CaptureStatus? = null,
     val calibratedSteps: Set<CalibStep> = emptySet(),
-    // Puntos de la cara para dibujar sobre la cámara
-    val landmarks: FloatArray? = null,
-    val imgW: Int = 0,
-    val imgH: Int = 0,
+    /** Imagen analizada + malla + lengua del mismo cuadro. */
+    val preview: PreviewFrame? = null,
 )
 
 class TrackingViewModel(app: Application) : AndroidViewModel(app) {
@@ -78,7 +77,9 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Cámara
 
-    fun startCamera(owner: LifecycleOwner, previewView: PreviewView?) {
+    private fun p0Capturing() = pipeline.calibration.capturing != null
+
+    fun startCamera(owner: LifecycleOwner, previewView: PreviewView? = null) {
         // MediaPipe se inicializa en el hilo de la cámara con el primer cuadro (no traba la UI)
         camera.start(owner, previewView, _settings.value.resolution) { bmp -> pipeline.process(bmp) }
     }
@@ -101,7 +102,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         }
         t?.debug?.let { lastDebug = it.asImageBitmap() }
         // Con los puntos visibles refrescamos a ~20 Hz para que sigan bien a la cara
-        val interval = if (_settings.value.meshMode > 0) 50_000_000L else 100_000_000L
+        val interval = if (_settings.value.showPreview || p0Capturing()) 50_000_000L else 100_000_000L
         if (now - lastUiNanos < interval) return
         lastUiNanos = now
         val p = pipeline
@@ -122,10 +123,8 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             tongueDebug = if (_settings.value.showTongueDebug) lastDebug else null,
             ifmStatus = sinks.firstOrNull { it is IFacialMocapServer }?.status?.value ?: "Desactivado",
             vtsStatus = sinks.firstOrNull { it is VTubeStudioPlugin }?.status?.value ?: "Desactivado",
-            captureProgress = p.calibration.progress(now),
-            landmarks = p.landmarkSnapshot,
-            imgW = (p.imageSize ushr 32).toInt(),
-            imgH = (p.imageSize and 0xFFFFFFFFL).toInt(),
+            capture = p.calibration.captureStatus(now),
+            preview = p.previewFrame,
         ) }
     }
 
@@ -214,7 +213,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             message = if (ok && nextStep == null) "¡Calibración completa! ✓" else msg,
             wizardStep = nextStep,
             calibratedSteps = p.calibration.done.toSet(),
-            captureProgress = -1f,
+            capture = null,
         ) }
     }
 

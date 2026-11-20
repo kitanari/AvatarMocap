@@ -113,6 +113,38 @@ object ArKit {
 
     val SIDEWAYS: IntArray = intArrayOf(MOUTH_LEFT, MOUTH_RIGHT, JAW_LEFT, JAW_RIGHT)
 
+    /**
+     * Valor que manda un iPhone (ARKit) cuando hacés el gesto al máximo. Los modelos "perfect sync"
+     * están diseñados para estos rangos: si les mandás 1.0 en todo, la boca se rompe.
+     * La calibración lleva TU máximo a este valor (no a 1.0).
+     */
+    val REF_MAX: FloatArray = FloatArray(COUNT) { i ->
+        val n = NAMES[i]
+        when {
+            n == "jawOpen" -> 0.70f
+            n.startsWith("mouthLowerDown") -> 0.55f
+            n.startsWith("mouthUpperUp") -> 0.50f
+            n == "mouthFunnel" -> 0.60f
+            n == "mouthPucker" -> 0.80f
+            n.startsWith("mouthStretch") -> 0.45f
+            n.startsWith("mouthSmile") -> 0.85f
+            n.startsWith("mouthFrown") -> 0.55f
+            n.startsWith("mouthDimple") -> 0.45f
+            n.startsWith("mouthRoll") -> 0.50f
+            n.startsWith("mouthShrug") -> 0.50f
+            n.startsWith("mouthPress") -> 0.50f
+            n == "mouthClose" -> 0.35f
+            n == "mouthLeft" || n == "mouthRight" -> 0.50f
+            n == "jawLeft" || n == "jawRight" || n == "jawForward" -> 0.40f
+            n.startsWith("eyeWide") -> 0.70f
+            n.startsWith("eyeSquint") -> 0.75f
+            n.startsWith("cheekSquint") -> 0.75f
+            n.startsWith("noseSneer") -> 0.70f
+            n == "cheekPuff" -> 0.85f
+            else -> 1f // parpadeo, mirada, cejas, lengua
+        }
+    }
+
     /** Intercambia lados in-place (útil si la cámara entrega la imagen espejada). */
     fun swapSides(v: FloatArray) {
         for (i in 0 until COUNT) {

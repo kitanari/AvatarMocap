@@ -178,8 +178,8 @@ class VTubeStudioPlugin(
         put("FacePositionX", frame.headPos[0] * 100f)
         put("FacePositionY", frame.headPos[1] * 100f)
         put("FacePositionZ", frame.headPos[2] * 100f)
-        put("MouthOpen", b[ArKit.JAW_OPEN])
-        val smile = (b[ArKit.SMILE_L] + b[ArKit.SMILE_R]) / 2f
+        put("MouthOpen", (b[ArKit.JAW_OPEN] / ArKit.REF_MAX[ArKit.JAW_OPEN]).coerceIn(0f, 1f))
+        val smile = (b[ArKit.SMILE_L] + b[ArKit.SMILE_R]) / (2f * ArKit.REF_MAX[ArKit.SMILE_L])
         val frown = (b[ArKit.FROWN_L] + b[ArKit.FROWN_R]) / 2f
         put("MouthSmile", (0.5f + 0.5f * (smile - frown)).coerceIn(0f, 1f))
         put("MouthX", (b[ArKit.MOUTH_RIGHT] - b[ArKit.MOUTH_LEFT]).coerceIn(-1f, 1f))
@@ -194,7 +194,7 @@ class VTubeStudioPlugin(
         put("BrowLeftY", browL.coerceIn(0f, 1f))
         put("BrowRightY", browR.coerceIn(0f, 1f))
         put("Brows", ((browL + browR) / 2f).coerceIn(0f, 1f))
-        put("CheekPuff", b[ArKit.CHEEK_PUFF])
+        put("CheekPuff", (b[ArKit.CHEEK_PUFF] / ArKit.REF_MAX[ArKit.CHEEK_PUFF]).coerceIn(0f, 1f))
         put("TongueOut", b[ArKit.TONGUE_OUT])
 
         // ---- Parámetros personalizados (52 ARKit crudos + lengua)

@@ -58,6 +58,12 @@ data class AppSettings(
     val mouthSymmetry: Float = 0.6f,
     /** Multiplicador de mover la boca/mandíbula a los costados. */
     val mouthSide: Float = 0.5f,
+    /** Límite total de apertura de boca (1 = como un iPhone con la boca bien abierta). */
+    val mouthLimit: Float = 0.9f,
+    /** Lleva tu máximo calibrado al rango que manda un iPhone (evita que la boca se rompa). */
+    val iphoneRanges: Boolean = true,
+    /** Calibración rápida: solo de frente (sin girar la cabeza). */
+    val quickCalibration: Boolean = false,
 
     // Ajuste fino por grupo (multiplicadores), en el orden de ArKit.G_*
     val gainEyes: Float = 1f,
@@ -113,6 +119,9 @@ class SettingsStore(context: Context) {
             mouthStable = prefs.getBoolean("mouthStable", d.mouthStable),
             mouthSymmetry = prefs.getFloat("mouthSymmetry", d.mouthSymmetry),
             mouthSide = prefs.getFloat("mouthSide", d.mouthSide),
+            mouthLimit = prefs.getFloat("mouthLimit", d.mouthLimit),
+            iphoneRanges = prefs.getBoolean("iphoneRanges", d.iphoneRanges),
+            quickCalibration = prefs.getBoolean("quickCalibration", d.quickCalibration),
             gainEyes = prefs.getFloat("gainEyes", 1f),
             gainBrows = prefs.getFloat("gainBrows", 1f),
             gainMouthOpen = prefs.getFloat("gainMouthOpen", 1f),
@@ -154,6 +163,9 @@ class SettingsStore(context: Context) {
             .putBoolean("mouthStable", s.mouthStable)
             .putFloat("mouthSymmetry", s.mouthSymmetry)
             .putFloat("mouthSide", s.mouthSide)
+            .putFloat("mouthLimit", s.mouthLimit)
+            .putBoolean("iphoneRanges", s.iphoneRanges)
+            .putBoolean("quickCalibration", s.quickCalibration)
             .putFloat("gainEyes", s.gainEyes)
             .putFloat("gainBrows", s.gainBrows)
             .putFloat("gainMouthOpen", s.gainMouthOpen)
@@ -164,8 +176,8 @@ class SettingsStore(context: Context) {
     }
 
     var calibrationJson: String
-        get() = prefs.getString("calibration_v3", "") ?: ""
-        set(v) = prefs.edit().putString("calibration_v3", v).apply()
+        get() = prefs.getString("calibration_v4", "") ?: ""
+        set(v) = prefs.edit().putString("calibration_v4", v).apply()
 
     var vtsToken: String
         get() = prefs.getString("vtsToken", "") ?: ""
