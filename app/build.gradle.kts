@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -78,7 +80,7 @@ val downloadFaceModel by tasks.registering {
         if (!f.exists()) {
             f.parentFile.mkdirs()
             logger.lifecycle("Descargando modelo de MediaPipe -> ${f.path}")
-            java.net.URI(faceModelUrl).toURL().openStream().use { input ->
+            URI(faceModelUrl).toURL().openStream().use { input ->
                 f.outputStream().use { output -> input.copyTo(output) }
             }
         }
