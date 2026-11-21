@@ -428,6 +428,8 @@ private fun ConnectionCard(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
             )
             OutlinedButton({ vm.discoverVts() }) { Text(tr("Buscar en la red", "Search the network")) }
         }
+        // Estado detallado: muestra si la PC ya llamó al teléfono
+        StatusText(if (s.vtsEnabled) ui.vtsStatus else ui.ifmStatus)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(10.dp).clip(CircleShape).background(if (ui.connected) Ui.Good else Ui.Bad))
             Spacer(Modifier.width(8.dp))

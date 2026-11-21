@@ -39,6 +39,11 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
     val currentTarget: InetAddress? get() = target
     override val connected: Boolean get() = target != null
     @Volatile private var v2 = false
+    /** Modo TCP: la PC pidió los datos por TCP al puerto 49986. */
+    @Volatile private var tcpOut: java.io.OutputStream? = null
+    @Volatile private var tcpTarget: InetAddress? = null
+    private var tcpSocket: java.net.Socket? = null
+    private var tcpThread: Thread? = null
     @Volatile private var running = true
     private var socket: DatagramSocket? = null
     private val sb = StringBuilder(1500)
@@ -74,7 +79,15 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
                 val p = DatagramPacket(buf, buf.size)
                 s.receive(p)
                 val text = String(p.data, 0, p.length, Charsets.UTF_8)
-                if (text.contains(HANDSHAKE)) {
+                if (text.contains(HANDSHAKE_TCP)) {
+                    // Variante TCP: los datos van por TCP al puerto 49986 de la PC
+                    v2 = text.contains("sendDataVersion=v2")
+                    if (tcpTarget != p.address) {
+                        tcpTarget = p.address
+                        target = p.address
+                        startTcp(p.address)
+                    }
+                } else if (text.contains(HANDSHAKE)) {
                     v2 = text.contains("sendDataVersion=v2")
                     if (target != p.address) {
                         target = p.address
@@ -103,6 +116,21 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
             .append(f(p[0])).append(',').append(f(p[1])).append(',').append(f(p[2])).append('|')
         sb.append("rightEye#").append(f(frame.rightEye[0])).append(',').append(f(frame.rightEye[1])).append(",0|")
         sb.append("leftEye#").append(f(frame.leftEye[0])).append(',').append(f(frame.leftEye[1])).append(",0|")
+        val tcp = tcpOut
+        if (tcp != null) {
+            try {
+                tcp.write((sb.toString() + TCP_SUFFIX).toByteArray(Charsets.UTF_8))
+                tcp.flush()
+                if (++sentCount % 300 == 0L) {
+                    _status.value = tr("Enviando por TCP a ${dst.hostAddress}:$TCP_PORT · $sentCount", "Sending via TCP to ${dst.hostAddress}:$TCP_PORT · $sentCount")
+                }
+            } catch (e: Exception) {
+                tcpOut = null
+                _status.value = tr("Se cortó la conexión TCP; reintentando…", "TCP connection lost; retrying…")
+                tcpTarget?.let { startTcp(it) }
+            }
+            return
+        }
         val bytes = sb.toString().toByteArray(Charsets.UTF_8)
         try {
             s.send(DatagramPacket(bytes, bytes.size, dst, PORT))
@@ -114,15 +142,44 @@ class IFacialMocapServer(manualTargetIp: String) : OutputSink {
         }
     }
 
+    @Synchronized
+    private fun startTcp(addr: InetAddress) {
+        if (tcpThread?.isAlive == true) return
+        tcpThread = thread(name = "ifm-tcp", isDaemon = true) {
+            var attempts = 0
+            while (running && tcpOut == null && attempts < 30) {
+                attempts++
+                try {
+                    _status.value = tr("Conectando por TCP a ${addr.hostAddress}:$TCP_PORT…", "Connecting via TCP to ${addr.hostAddress}:$TCP_PORT…")
+                    val sock = java.net.Socket()
+                    sock.tcpNoDelay = true
+                    sock.connect(InetSocketAddress(addr, TCP_PORT), 3000)
+                    tcpSocket?.close()
+                    tcpSocket = sock
+                    tcpOut = sock.getOutputStream()
+                    _status.value = tr("Conectado por TCP a ${addr.hostAddress}", "Connected via TCP to ${addr.hostAddress}")
+                } catch (e: Exception) {
+                    _status.value = tr("La PC no acepta TCP en el puerto $TCP_PORT (${e.message}). Reintentando…",
+                        "The PC doesn't accept TCP on port $TCP_PORT (${e.message}). Retrying…")
+                    try { Thread.sleep(1000) } catch (ie: InterruptedException) { return@thread }
+                }
+            }
+        }
+    }
+
     override fun close() {
         running = false
         socket?.close()
+        try { tcpSocket?.close() } catch (e: Exception) { }
     }
 
     companion object {
         private const val TAG = "IFM"
         const val PORT = 49983
         const val HANDSHAKE = "iFacialMocap_sahuasouryya9218sauhuiayeta91555dy3719"
+        const val HANDSHAKE_TCP = "iFacialMocap_UDPTCP_sahuasouryya9218sauhuiayeta91555dy3719"
+        const val TCP_PORT = 49986
+        private const val TCP_SUFFIX = "___iFacialMocap"
 
         private fun f(v: Float) = String.format(Locale.US, "%.4f", v)
 
