@@ -485,6 +485,9 @@ private fun AdvancedTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
                 ToggleRow(tr("Enviar brazos, manos y dedos al avatar VRM", "Send arms, hands and fingers to the VRM avatar"), s.vmcHands) { v ->
                     vm.update { it.copy(vmcHands = v) }
                 }
+                ToggleRow(tr("Efecto espejo (tu mano derecha mueve la izquierda del avatar)", "Mirror effect (your right hand moves the avatar's left)"), s.mirrorHands) { v ->
+                    vm.update { it.copy(mirrorHands = v) }
+                }
                 ToggleRow(tr("Intercambiar mano izquierda/derecha", "Swap left/right hand"), s.swapHands) { v -> vm.update { it.copy(swapHands = v) } }
                 Text(tr("Alcance de los brazos: %.0f%%", "Arm reach: %.0f%%").format(s.armReach * 100), color = Ui.Text, fontSize = 13.sp)
                 Slider(s.armReach, { v -> vm.update { it.copy(armReach = v) } }, valueRange = 0.6f..2.2f)

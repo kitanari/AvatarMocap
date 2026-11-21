@@ -178,7 +178,8 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             old.vtsEnabled != new.vtsEnabled || old.vtsHost != new.vtsHost || old.vtsPort != new.vtsPort ||
             old.vmcEnabled != new.vmcEnabled || old.vmcHost != new.vmcHost || old.vmcPort != new.vmcPort ||
             old.vmcVrm1 != new.vmcVrm1 || old.vmcArkit != new.vmcArkit || old.vmcBones != new.vmcBones ||
-            old.handsEnabled != new.handsEnabled || old.vmcHands != new.vmcHands || old.armReach != new.armReach
+            old.handsEnabled != new.handsEnabled || old.vmcHands != new.vmcHands || old.armReach != new.armReach ||
+            old.mirrorHands != new.mirrorHands
         if (netChanged) viewModelScope.launch(Dispatchers.IO) { rebuildSinks(pipeline, new) }
         if (old.accel != new.accel) message(tr("El cambio de GPU/CPU se aplica al reiniciar la app", "The GPU/CPU change applies after restarting the app"))
     }
@@ -192,7 +193,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         if (ifm != null) p.sinks.add(ifm)
         if (s.vmcEnabled) {
             p.sinks.add(
-                VmcSender(s.vmcHost, s.vmcPort, s.vmcVrm1, s.vmcArkit, s.vmcBones, s.handsEnabled && s.vmcHands, s.armReach) {
+                VmcSender(s.vmcHost, s.vmcPort, s.vmcVrm1, s.vmcArkit, s.vmcBones, s.handsEnabled && s.vmcHands, s.armReach, s.mirrorHands) {
                     ifm?.currentTarget
                 }
             )

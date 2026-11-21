@@ -82,6 +82,8 @@ data class AppSettings(
     /** Envía brazos, manos y dedos por la salida VRM. */
     val vmcHands: Boolean = true,
     val swapHands: Boolean = false,
+    /** El avatar te imita como un espejo (tu mano derecha mueve su mano izquierda). */
+    val mirrorHands: Boolean = true,
     /** Cuánto se mueven los brazos del avatar respecto de tus manos. */
     val armReach: Float = 1.3f,
     val viewHands: Boolean = true,
@@ -154,6 +156,7 @@ class SettingsStore(context: Context) {
             handsHalfRate = prefs.getBoolean("handsHalfRate", d.handsHalfRate),
             vmcHands = prefs.getBoolean("vmcHands", d.vmcHands),
             swapHands = prefs.getBoolean("swapHands", d.swapHands),
+            mirrorHands = prefs.getBoolean("mirrorHands", d.mirrorHands),
             armReach = prefs.getFloat("armReach", d.armReach),
             viewHands = prefs.getBoolean("viewHands", d.viewHands),
             gainEyes = prefs.getFloat("gainEyes", 1f),
@@ -211,6 +214,7 @@ class SettingsStore(context: Context) {
             .putBoolean("handsHalfRate", s.handsHalfRate)
             .putBoolean("vmcHands", s.vmcHands)
             .putBoolean("swapHands", s.swapHands)
+            .putBoolean("mirrorHands", s.mirrorHands)
             .putFloat("armReach", s.armReach)
             .putBoolean("viewHands", s.viewHands)
             .putFloat("gainEyes", s.gainEyes)

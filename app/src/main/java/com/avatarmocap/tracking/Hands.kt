@@ -191,6 +191,19 @@ object ArmIK {
         return Pose(qUpper, qLower, qHand, fingers)
     }
 
+    /** Brazo relajado hacia abajo (unos 70° desde la T-pose), mano y dedos en reposo. */
+    fun rest(left: Boolean): Pose {
+        val side = if (left) -1f else 1f
+        val upper = Quat.fromTo(V3(side, 0f, 0f), V3(side * 0.34f, -0.94f, 0f).norm())
+        return Pose(upper, Quat.IDENTITY, Quat.IDENTITY, Array(15) { Quat.IDENTITY })
+    }
+
+    /** Interpola entre dos poses (t = 0 -> a, 1 -> b). */
+    fun blend(a: Pose, b: Pose, t: Float) = Pose(
+        a.upper.slerpTo(b.upper, t), a.lower.slerpTo(b.lower, t), a.hand.slerpTo(b.hand, t),
+        Array(15) { a.fingers[it].slerpTo(b.fingers[it], t) },
+    )
+
     /** Nombres de huesos de VRM (humanoide) para cada articulación de dedo. */
     fun fingerBone(left: Boolean, i: Int): String {
         val side = if (left) "Left" else "Right"

@@ -2,6 +2,10 @@ package com.avatarmocap.output
 
 import com.avatarmocap.i18n.tr
 import com.avatarmocap.tracking.ArKit
+import com.avatarmocap.tracking.ArmIK
+import com.avatarmocap.tracking.HandData
+import com.avatarmocap.tracking.Quat
+import com.avatarmocap.tracking.V3
 import com.avatarmocap.tracking.FaceFrame
 import com.avatarmocap.tracking.Vrm
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +35,8 @@ class VmcSender(
     /** Brazos, manos y dedos (seguimiento de manos). */
     private val sendHands: Boolean,
     private val armReach: Float,
+    /** El avatar actúa como tu reflejo en un espejo. */
+    private val mirror: Boolean,
     /** Si no hay IP fija, se usa la PC conectada por iFacialMocap. */
     private val fallbackTarget: () -> InetAddress?,
 ) : OutputSink {
@@ -91,14 +97,26 @@ class VmcSender(
         }
 
         if (sendHands) {
-            for ((hand, left) in listOf(frame.hands.left to true, frame.hands.right to false)) {
-                if (!hand.found) continue
+            for (left in booleanArrayOf(true, false)) {
+                // Mano del usuario que maneja este lado del avatar
+                val src = if (mirror) (if (left) frame.hands.right else frame.hands.left)
+                          else (if (left) frame.hands.left else frame.hands.right)
+                val idx = if (left) 0 else 1
+                val target: ArmIK.Pose? = if (src.found) {
+                    seen[idx] = true
+                    ArmIK.solve(if (mirror) mirrorHand(src) else src, left, armReach)
+                } else if (seen[idx]) ArmIK.rest(left) else null
+                if (target == null) continue
+                // Suavizado: al perder la mano, el brazo baja despacio a reposo (no se congela)
+                val prev = last[idx]
+                val t = if (src.found) 0.6f else 0.12f
+                val pose = if (prev == null) target else ArmIK.blend(prev, target, t)
+                last[idx] = pose
                 val side = if (left) "Left" else "Right"
-                val pose = com.avatarmocap.tracking.ArmIK.solve(hand, left, armReach)
                 boneQ("${side}UpperArm", pose.upper)
                 boneQ("${side}LowerArm", pose.lower)
                 boneQ("${side}Hand", pose.hand)
-                for (i in 0 until 15) boneQ(com.avatarmocap.tracking.ArmIK.fingerBone(left, i), pose.fingers[i])
+                for (i in 0 until 15) boneQ(ArmIK.fingerBone(left, i), pose.fingers[i])
             }
         }
 
@@ -144,12 +162,21 @@ class VmcSender(
         }
     }
 
-    private fun boneQ(name: String, q: com.avatarmocap.tracking.Quat) {
+    private fun boneQ(name: String, q: Quat) {
         element("/VMC/Ext/Bone/Pos") {
             str(name)
             float(0f); float(0f); float(0f)
             float(q.x); float(q.y); float(q.z); float(q.w)
         }
+    }
+
+    private val seen = BooleanArray(2)
+    private val last = arrayOfNulls<ArmIK.Pose>(2)
+
+    /** Refleja una mano en el plano YZ: pasa a ser la mano del otro lado. */
+    private fun mirrorHand(h: HandData): HandData {
+        val q = h.palm
+        return HandData(true, h.image, h.bend, h.openness, Quat(q.x, -q.y, -q.z, q.w), V3(-h.pos.x, h.pos.y, h.pos.z))
     }
 
     override fun close() {
