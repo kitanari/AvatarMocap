@@ -129,6 +129,8 @@ class Calibration {
     val earClosed = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var gapMax = Float.NaN
     val puffMax = floatArrayOf(Float.NaN, Float.NaN)
+    /** Valor del surco con los cachetes inflados (paso PUFF, de frente). */
+    val puffFold = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var tongueF0 = 0.05f
     @Volatile var tongueF1 = 0.35f
     /** Color aprendido de la lengua (Cr, Cb, Y relativos a la piel) o NaN. */
@@ -320,7 +322,10 @@ class Calibration {
             CalibStep.PUFF -> {
                 val pl = d.featUpper[Feat.PUFF_L] - n.featMean[Feat.PUFF_L]
                 val pr = d.featUpper[Feat.PUFF_R] - n.featMean[Feat.PUFF_R]
-                if (min(pl, pr) < 0.004f && d.upper[ArKit.CHEEK_PUFF] - n.mean[ArKit.CHEEK_PUFF] < 0.1f) {
+                val fl = n.featMean[Feat.FOLD_L] - d.featMean[Feat.FOLD_L]
+                val fr = n.featMean[Feat.FOLD_R] - d.featMean[Feat.FOLD_R]
+                val foldOk = !fl.isNaN() && !fr.isNaN() && min(fl, fr) > 0.02f * n.featMean[Feat.FOLD_L]
+                if (!foldOk && min(pl, pr) < 0.004f && d.upper[ArKit.CHEEK_PUFF] - n.mean[ArKit.CHEEK_PUFF] < 0.1f) {
                     return false to tr("No se notó el inflado. Inflá más los cachetes.", "No puff detected. Puff your cheeks more.")
                 }
             }
@@ -371,6 +376,9 @@ class Calibration {
         tongueF0 = steps[CalibStep.A]?.get(Pose.CENTER)?.featMean?.get(Feat.TONGUE)?.takeIf { !it.isNaN() } ?: 0.05f
         val tb = steps[CalibStep.TONGUE]?.get(Pose.CENTER)
         tongueF1 = tb?.featUpper?.get(Feat.TONGUE)?.takeIf { !it.isNaN() } ?: max(0.35f, tongueF0 + 0.2f)
+        val pc = steps[CalibStep.PUFF]?.get(Pose.CENTER)
+        puffFold[0] = pc?.featMean?.get(Feat.FOLD_L) ?: Float.NaN
+        puffFold[1] = pc?.featMean?.get(Feat.FOLD_R) ?: Float.NaN
         val nc = neutralBins?.get(Pose.CENTER)
         lipColor[0] = nc?.featMean?.get(Feat.LIP_CR) ?: Float.NaN
         lipColor[1] = nc?.featMean?.get(Feat.LIP_CB) ?: Float.NaN
@@ -499,6 +507,25 @@ class Calibration {
         out[0] = ((dx - MOUTH_DEAD) / (mouthSpanL - MOUTH_DEAD).coerceAtLeast(0.005f)).coerceIn(0f, 1f)
         out[1] = ((-dx - MOUTH_DEAD) / (mouthSpanR - MOUTH_DEAD).coerceAtLeast(0.005f)).coerceIn(0f, 1f)
         return true
+    }
+
+    /**
+     * Cachetes inflados por la IMAGEN: cuánto se "borró" el surco nariz-boca respecto de tu cara
+     * neutral, en relación a cuánto se borra cuando inflás (paso "Cachetes inflados").
+     * Mínimo de ambos lados.
+     */
+    fun foldSignal(feat: FloatArray): Float {
+        var sig = 1f
+        val idx = intArrayOf(Feat.FOLD_L, Feat.FOLD_R)
+        for (k in 0..1) {
+            val n = featNeutral[idx[k]]
+            val cur = feat[idx[k]]
+            if (n.isNaN() || cur.isNaN()) return 0f
+            val p = puffFold[k]
+            val span = if (p.isNaN() || n - p < n * 0.08f) n * 0.35f else n - p
+            sig = min(sig, ((n - cur) / span).coerceIn(0f, 1f))
+        }
+        return sig
     }
 
     fun puffSignal(feat: FloatArray): Float {

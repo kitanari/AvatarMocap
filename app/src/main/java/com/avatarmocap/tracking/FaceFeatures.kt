@@ -29,7 +29,10 @@ object Feat {
     const val LIP_Y = 15
     /** Desplazamiento lateral de la boca respecto de la nariz (+ = hacia la izquierda del usuario). */
     const val MOUTH_X = 16
-    const val COUNT = 17
+    /** "Arruga" del surco nariz-boca (bordes en la imagen). Al inflar los cachetes se estira y baja. */
+    const val FOLD_L = 17
+    const val FOLD_R = 18
+    const val COUNT = 19
 }
 
 object FaceFeatures {

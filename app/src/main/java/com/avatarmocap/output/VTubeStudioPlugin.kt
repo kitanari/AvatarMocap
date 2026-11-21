@@ -50,6 +50,7 @@ class VTubeStudioPlugin(
     private val url = "ws://$host:$port"
     @Volatile private var ws: WebSocket? = null
     @Volatile private var authenticated = false
+    override val connected: Boolean get() = authenticated
     @Volatile private var closed = false
     private var reqId = 0
     private var lastSendNanos = 0L

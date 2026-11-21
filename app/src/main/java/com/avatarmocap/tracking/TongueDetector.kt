@@ -57,6 +57,8 @@ class TongueDetector {
     private var active = false
     private var onCount = 0
     private var offCount = 0
+    /** Brillo de la piel (mejillas) medido en el último cuadro. */
+    val skinLuma: Float get() = skinY
     private var skinY = 128f
     private var skinCr = 140f
     private var skinCb = 115f
@@ -94,7 +96,7 @@ class TongueDetector {
         val left = min(px(61), px(291)) - mouthW * 0.12f
         val right = max(px(61), px(291)) + mouthW * 0.12f
 
-        if (frameCounter % 8 == 1) updateSkin(bmp, px(205), py(205), px(425), py(425))
+        if (frameCounter % 4 == 1) updateSkin(bmp, px(205), py(205), px(425), py(425))
 
         val rx0 = floor0(left, w)
         val ry0 = floor0(min(polyY.min(), cy) - 2f, h)

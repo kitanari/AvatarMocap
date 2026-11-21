@@ -54,6 +54,10 @@ data class UiState(
     val calibratedSteps: Set<CalibStep> = emptySet(),
     val convertMs: Float = 0f,
     val sendFps: Float = 0f,
+    val paused: Boolean = false,
+    /** Alguna salida tiene una PC recibiendo. */
+    val connected: Boolean = false,
+    val exposure: String = "",
     /** Blendshapes crudos de MediaPipe (para el editor de gestos). */
     val raw: FloatArray = FloatArray(ArKit.COUNT),
     val profiles: List<String> = emptyList(),
@@ -97,7 +101,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startCamera(owner: LifecycleOwner, previewView: PreviewView? = null) {
         // MediaPipe se inicializa en el hilo de la cámara con el primer cuadro (no traba la UI)
-        camera.start(owner, previewView, _settings.value.resolution) { bmp -> pipeline.process(bmp) }
+        camera.start(owner, previewView, _settings.value.resolution, _settings.value.rearCamera) { bmp -> pipeline.process(bmp) }
     }
 
     // ---------- Estado para la UI (limitado a ~10 Hz para no robarle CPU al tracking)
@@ -110,6 +114,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun onFrame(frame: FaceFrame, t: TongueDetector.Result?) {
         val now = SystemClock.elapsedRealtimeNanos()
+        if (frame.faceFound && pipeline.faceLuma > 0f) camera.reportFaceLuma(pipeline.faceLuma)
         frames++
         if (fpsWindowStart == 0L) fpsWindowStart = now
         if (now - fpsWindowStart >= 1_000_000_000L) {
@@ -142,6 +147,8 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             capture = p.calibration.captureStatus(now),
             convertMs = camera.convertMs,
             sendFps = p.scheduler.sendFps,
+            connected = sinks.any { it.connected },
+            exposure = camera.exposureInfo,
             raw = p.lastRaw,
             tongueMs = p.lastTongueMs,
         ) }
@@ -243,7 +250,23 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(calibratedSteps = emptySet(), message = tr("Calibración borrada", "Calibration cleared")) }
     }
 
-    // ---------- Editor de gestos (ajustes manuales por blendshape)
+    // ---------- Barra inferior
+
+    fun togglePause() {
+        val p = !pipeline.paused
+        pipeline.paused = p
+        _ui.update { it.copy(paused = p, message = if (p) tr("Tracking en pausa", "Tracking paused") else "") }
+    }
+
+    fun restartTracking() {
+        pipeline.resetTracking()
+        pipeline.paused = false
+        _ui.update { it.copy(paused = false, message = tr("Tracking reiniciado", "Tracking restarted")) }
+    }
+
+    fun switchCamera() = update { it.copy(rearCamera = !it.rearCamera) }
+
+        // ---------- Editor de gestos (ajustes manuales por blendshape)
 
     fun effMin(i: Int) = pipeline.calibration.effMin(i)
     fun effMax(i: Int) = pipeline.calibration.effMax(i)

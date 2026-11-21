@@ -67,6 +67,12 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     private val smoother = LandmarkSmoother()
 
     private val feat = FloatArray(Feat.COUNT)
+    private val fold = FloatArray(2)
+    /** Brillo medio de la piel de la cara (0..255), para la exposición automática. */
+    @Volatile var faceLuma = 0f
+        private set
+    /** En pausa no se procesa nada. */
+    @Volatile var paused = false
     private val raw = FloatArray(ArKit.COUNT)
     /** Copia de los blendshapes crudos del último cuadro (para el editor de gestos). */
     @Volatile var lastRaw: FloatArray = FloatArray(ArKit.COUNT)
@@ -84,6 +90,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     private var lostFrames = 0
 
     fun process(bitmap: Bitmap) {
+        if (paused) return
         val t0 = SystemClock.elapsedRealtimeNanos()
         val s = settings
         val nowMs = SystemClock.uptimeMillis()
@@ -133,6 +140,10 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         val tt0 = SystemClock.elapsedRealtimeNanos()
         val t = tongue.process(bitmap, pts, n, s.showTongueDebug)
         lastTongueMs = (SystemClock.elapsedRealtimeNanos() - tt0) / 1e6f
+        faceLuma = tongue.skinLuma
+        CheekFold.compute(bitmap, pts, tongue.skinLuma, fold)
+        feat[Feat.FOLD_L] = fold[0]
+        feat[Feat.FOLD_R] = fold[1]
         feat[Feat.TONGUE] = t.feature
         feat[Feat.TONGUE_CR] = t.tongueCr
         feat[Feat.TONGUE_CB] = t.tongueCb
@@ -141,7 +152,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         feat[Feat.LIP_CB] = t.lipCb
         feat[Feat.LIP_Y] = t.lipY
         raw[ArKit.TONGUE_OUT] = t.value
-        if (s.showPreview) publishPreview(bitmap, if (s.meshMode > 0) pts else null, t.hull, t0)
+        if (s.showPreview) publishPreview(bitmap, pts, t.hull, t0)
 
         // 3) Pose de la cabeza
         val matrix = result.facialTransformationMatrixes().orElse(null)?.firstOrNull()
@@ -163,7 +174,10 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         for (i in ArKit.SIDEWAYS) side = max(side, cal[i])
         val gate = gateDown(jaw, 0.2f, 4f) * gateDown(smile, 0.3f, 3f) *
             gateDown(side, 0.12f, 4f) * gateDown(cal[ArKit.MOUTH_PUCKER], 0.5f, 2f)
-        cal[ArKit.CHEEK_PUFF] = max(cal[ArKit.CHEEK_PUFF], calibration.puffSignal(feat)) * gate
+        // Labios juntos: con la boca abierta no se pueden inflar los cachetes
+        val lipsGate = gateDown(feat[Feat.GAP] - (calibration.featNeutral[Feat.GAP].takeIf { !it.isNaN() } ?: feat[Feat.GAP]), 0.03f, 10f)
+        val puffAll = max(cal[ArKit.CHEEK_PUFF], max(calibration.puffSignal(feat), calibration.foldSignal(feat)))
+        cal[ArKit.CHEEK_PUFF] = puffAll * gate * lipsGate
 
         // 7) Ajuste fino por grupo + boca estable (anti-clipping al final)
         val g = gains
@@ -331,11 +345,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             previewPool[previewIdx] = dst
         }
         android.graphics.Canvas(dst!!).drawBitmap(src, 0f, 0f, null)
-        val xy = pts?.let { p ->
-            val n = p.size / 3
-            FloatArray(n * 2) { i -> p[(i / 2) * 3 + (i % 2)] }
-        }
-        val pf = PreviewFrame(dst, xy, hull, ++previewSeq)
+        val pf = PreviewFrame(dst, pts?.copyOf(), hull, ++previewSeq)
         previewFrame = pf
         onPreview?.invoke(pf)
     }
@@ -345,6 +355,13 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     private fun emit(frame: FaceFrame, t: TongueDetector.Result?) {
         scheduler.push(frame)
         listener?.invoke(frame, t)
+    }
+
+    /** "Reiniciar": olvida el estado del tracking (filtros, malla, lengua) sin tocar la calibración. */
+    fun resetTracking() {
+        resetFilters()
+        smoother.reset()
+        lastGood = null
     }
 
     private fun resetFilters() {
@@ -379,5 +396,5 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     }
 }
 
-/** Imagen analizada + malla (x,y normalizados) + contorno de la lengua, del MISMO cuadro. */
+/** Imagen analizada + malla (x,y,z normalizados) + contorno de la lengua, del MISMO cuadro. */
 class PreviewFrame(val bitmap: Bitmap, val landmarks: FloatArray?, val tongueHull: FloatArray?, val seq: Long)

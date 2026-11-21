@@ -9,6 +9,8 @@ import java.net.NetworkInterface
 interface OutputSink {
     val name: String
     val status: StateFlow<String>
+    /** true si hay una PC recibiendo los datos. */
+    val connected: Boolean get() = false
     /** Se llama desde el hilo de la cámara: no debe bloquear. */
     fun send(frame: FaceFrame)
     fun close()

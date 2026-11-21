@@ -29,7 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.avatarmocap.i18n.tr
+import com.avatarmocap.ui.AppTheme
 import com.avatarmocap.ui.MainScreen
+import com.avatarmocap.ui.Ui
 
 class MainActivity : ComponentActivity() {
 
@@ -41,8 +43,8 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(Modifier.fillMaxSize()) {
+            AppTheme {
+                Surface(Modifier.fillMaxSize(), color = Ui.Bg1) {
                     CameraPermissionGate { MainScreen(vm) }
                 }
             }

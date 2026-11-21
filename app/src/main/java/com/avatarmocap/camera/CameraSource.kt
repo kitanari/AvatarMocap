@@ -17,6 +17,10 @@ import androidx.annotation.OptIn
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -74,7 +78,13 @@ class CameraSource(private val context: Context) {
 
     @SuppressLint("UnsafeOptInUsageError")
     @OptIn(ExperimentalCamera2Interop::class)
-    fun start(owner: LifecycleOwner, previewView: PreviewView?, resolution: Int, frameHandler: (Bitmap) -> Unit) {
+    fun start(
+        owner: LifecycleOwner,
+        previewView: PreviewView?,
+        resolution: Int,
+        rear: Boolean,
+        frameHandler: (Bitmap) -> Unit,
+    ) {
         onFrame = frameHandler
         ensureWorker()
         val future = ProcessCameraProvider.getInstance(context)
@@ -92,7 +102,9 @@ class CameraSource(private val context: Context) {
                     ResolutionStrategy(size, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
                 )
                 .build()
-            val fpsRange = pickFpsRange(p)
+            val lens = if (rear) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+            val fpsRange = pickFpsRange(p, lens)
+            expIndex = 0; swGain = 1f; updateGainPaint()
 
             val analysisBuilder = ImageAnalysis.Builder()
                 .setResolutionSelector(selector)
@@ -121,26 +133,83 @@ class CameraSource(private val context: Context) {
 
             try {
                 p.unbindAll()
-                p.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, *useCases.toTypedArray())
+                camera = p.bindToLifecycle(owner, lens, *useCases.toTypedArray())
+                camera?.cameraControl?.setExposureCompensationIndex(0)
             } catch (e: Exception) {
                 Log.e(TAG, "No se pudo abrir la cámara", e)
             }
         }, ContextCompat.getMainExecutor(context))
     }
 
-    /** El rango de fps con el mínimo más alto que llegue a 30 (p.ej. [30,30] mejor que [15,30]). */
+    /**
+     * Rango de fps hasta 30 con un mínimo de ~20-24: la cámara puede exponer un poco más cuando
+     * hay poca luz (antes se forzaba [30,30] y la imagen se oscurecía).
+     */
     @SuppressLint("UnsafeOptInUsageError")
     @OptIn(ExperimentalCamera2Interop::class)
-    private fun pickFpsRange(p: ProcessCameraProvider): Range<Int>? = try {
-        val info = CameraSelector.DEFAULT_FRONT_CAMERA.filter(p.availableCameraInfos).firstOrNull()
+    private fun pickFpsRange(p: ProcessCameraProvider, lens: CameraSelector): Range<Int>? = try {
+        val info = lens.filter(p.availableCameraInfos).firstOrNull()
         val ranges = info?.let {
             Camera2CameraInfo.from(it)
                 .getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
         }
-        ranges?.filter { it.upper in 25..30 }?.maxByOrNull { it.lower }
-            ?: ranges?.maxByOrNull { it.upper * 100 + it.lower }
+        ranges?.filter { it.upper in 25..30 && it.lower in 15..24 }?.maxByOrNull { it.lower }
+            ?: ranges?.filter { it.upper in 25..30 }?.minByOrNull { it.lower }
     } catch (e: Exception) {
         null
+    }
+
+    // ---------- Exposición medida en la cara (no en el fondo)
+
+    private var camera: Camera? = null
+    private var expIndex = 0
+    private var lastExpAdjust = 0L
+    @Volatile private var swGain = 1f
+    @Volatile private var gainPaint: Paint? = null
+    @Volatile var faceLuma = 0f
+        private set
+    @Volatile var exposureInfo = ""
+        private set
+
+    /**
+     * Llamado por el tracking con el brillo medio de la cara (0..255). Sube o baja la
+     * compensación de exposición de la cámara para mantener la cara bien iluminada; si la
+     * cámara ya está al máximo, aclara la imagen por software.
+     */
+    fun reportFaceLuma(luma: Float) {
+        faceLuma = luma
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastExpAdjust < 400) return
+        lastExpAdjust = now
+        val cam = camera ?: return
+        val st = cam.cameraInfo.exposureState
+        val range = st.exposureCompensationRange
+        val supported = st.isExposureCompensationSupported
+        var newIdx = expIndex
+        if (supported) {
+            if (luma < TARGET_LOW && expIndex < range.upper) newIdx++
+            else if (luma > TARGET_HIGH && expIndex > range.lower) newIdx--
+            if (newIdx != expIndex) {
+                expIndex = newIdx
+                cam.cameraControl.setExposureCompensationIndex(newIdx)
+            }
+        }
+        // Ganancia por software solo si la cámara no puede más (o no soporta compensación)
+        val atMax = !supported || expIndex >= range.upper
+        val target = if (atMax && luma > 1f && luma < TARGET_LOW) (TARGET_MID / luma * swGain).coerceIn(1f, 2.2f)
+        else if (luma > TARGET_HIGH) (swGain * 0.95f).coerceAtLeast(1f)
+        else swGain
+        if (kotlin.math.abs(target - swGain) > 0.03f) {
+            swGain = swGain + (target - swGain) * 0.5f
+            updateGainPaint()
+        }
+        exposureInfo = "EV $expIndex · x%.1f".format(swGain)
+    }
+
+    private fun updateGainPaint() {
+        gainPaint = if (swGain <= 1.01f) null else Paint().apply {
+            colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setScale(swGain, swGain, swGain, 1f) })
+        }
     }
 
     private fun convertAndPublish(proxy: ImageProxy) {
@@ -186,7 +255,7 @@ class CameraSource(private val context: Context) {
         rect.set(0f, 0f, w.toFloat(), h.toFloat())
         matrix.mapRect(rect)
         matrix.postTranslate(-rect.left, -rect.top)
-        Canvas(o!!).drawBitmap(s, matrix, null)
+        Canvas(o!!).drawBitmap(s, matrix, gainPaint)
         convertMs = (SystemClock.elapsedRealtimeNanos() - now) / 1e6f
 
         synchronized(lock) {
@@ -234,5 +303,10 @@ class CameraSource(private val context: Context) {
         cameraExecutor.shutdown()
     }
 
-    companion object { private const val TAG = "CameraSource" }
+    companion object {
+        private const val TAG = "CameraSource"
+        private const val TARGET_LOW = 105f
+        private const val TARGET_MID = 135f
+        private const val TARGET_HIGH = 175f
+    }
 }

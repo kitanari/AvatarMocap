@@ -43,6 +43,8 @@ class VmcSender(
     private val msg = ByteArrayOutputStream(128)
     private val start = System.nanoTime()
     private var count = 0L
+    @Volatile private var lastSent = 0L
+    override val connected: Boolean get() = System.currentTimeMillis() - lastSent < 1500
 
     init {
         if (manualHost.isNotBlank()) {
@@ -88,6 +90,7 @@ class VmcSender(
         val bytes = out.toByteArray()
         try {
             socket.send(DatagramPacket(bytes, bytes.size, dst, port))
+            lastSent = System.currentTimeMillis()
             if (++count % 300 == 0L || count == 1L) {
                 _status.value = tr("Enviando a ${dst.hostAddress}:$port · $count paquetes", "Sending to ${dst.hostAddress}:$port · $count packets")
             }

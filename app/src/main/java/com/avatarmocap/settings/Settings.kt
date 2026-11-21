@@ -66,6 +66,15 @@ data class AppSettings(
     val quickCalibration: Boolean = false,
     /** Enviar a 60 fps interpolando entre cuadros de tracking. */
     val interpolate: Boolean = true,
+    /** Cámara trasera en vez de frontal. */
+    val rearCamera: Boolean = false,
+    // Qué se dibuja en la vista de la cara
+    val viewMesh: Boolean = true,
+    val viewPoints: Boolean = false,
+    val viewEyes: Boolean = true,
+    val viewMouth: Boolean = true,
+    /** Mostrar la imagen de la cámara detrás de la malla (si no, solo la cara 3D). */
+    val viewCamera: Boolean = false,
 
     // Ajuste fino por grupo (multiplicadores), en el orden de ArKit.G_*
     val gainEyes: Float = 1f,
@@ -125,6 +134,12 @@ class SettingsStore(context: Context) {
             language = prefs.getInt("language", d.language),
             quickCalibration = prefs.getBoolean("quickCalibration", d.quickCalibration),
             interpolate = prefs.getBoolean("interpolate", d.interpolate),
+            rearCamera = prefs.getBoolean("rearCamera", d.rearCamera),
+            viewMesh = prefs.getBoolean("viewMesh", d.viewMesh),
+            viewPoints = prefs.getBoolean("viewPoints", d.viewPoints),
+            viewEyes = prefs.getBoolean("viewEyes", d.viewEyes),
+            viewMouth = prefs.getBoolean("viewMouth", d.viewMouth),
+            viewCamera = prefs.getBoolean("viewCamera", d.viewCamera),
             gainEyes = prefs.getFloat("gainEyes", 1f),
             gainBrows = prefs.getFloat("gainBrows", 1f),
             gainMouthOpen = prefs.getFloat("gainMouthOpen", 1f),
@@ -170,6 +185,12 @@ class SettingsStore(context: Context) {
             .putInt("language", s.language)
             .putBoolean("quickCalibration", s.quickCalibration)
             .putBoolean("interpolate", s.interpolate)
+            .putBoolean("rearCamera", s.rearCamera)
+            .putBoolean("viewMesh", s.viewMesh)
+            .putBoolean("viewPoints", s.viewPoints)
+            .putBoolean("viewEyes", s.viewEyes)
+            .putBoolean("viewMouth", s.viewMouth)
+            .putBoolean("viewCamera", s.viewCamera)
             .putFloat("gainEyes", s.gainEyes)
             .putFloat("gainBrows", s.gainBrows)
             .putFloat("gainMouthOpen", s.gainMouthOpen)
