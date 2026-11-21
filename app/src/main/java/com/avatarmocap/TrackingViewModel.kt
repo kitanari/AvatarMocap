@@ -59,6 +59,8 @@ data class UiState(
     val connected: Boolean = false,
     val exposure: String = "",
     val puffDiag: FloatArray = FloatArray(5),
+    val hands: com.avatarmocap.tracking.HandsFrame = com.avatarmocap.tracking.HandsFrame.NONE,
+    val handMs: Float = 0f,
     /** Blendshapes crudos de MediaPipe (para el editor de gestos). */
     val raw: FloatArray = FloatArray(ArKit.COUNT),
     val profiles: List<String> = emptyList(),
@@ -151,6 +153,8 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             connected = sinks.any { it.connected },
             exposure = camera.exposureInfo,
             puffDiag = p.puffDiag,
+            hands = frame.hands,
+            handMs = p.lastHandMs,
             raw = p.lastRaw,
             tongueMs = p.lastTongueMs,
         ) }
@@ -173,7 +177,8 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         val netChanged = old.ifmEnabled != new.ifmEnabled || old.ifmTargetIp != new.ifmTargetIp ||
             old.vtsEnabled != new.vtsEnabled || old.vtsHost != new.vtsHost || old.vtsPort != new.vtsPort ||
             old.vmcEnabled != new.vmcEnabled || old.vmcHost != new.vmcHost || old.vmcPort != new.vmcPort ||
-            old.vmcVrm1 != new.vmcVrm1 || old.vmcArkit != new.vmcArkit || old.vmcBones != new.vmcBones
+            old.vmcVrm1 != new.vmcVrm1 || old.vmcArkit != new.vmcArkit || old.vmcBones != new.vmcBones ||
+            old.handsEnabled != new.handsEnabled || old.vmcHands != new.vmcHands || old.armReach != new.armReach
         if (netChanged) viewModelScope.launch(Dispatchers.IO) { rebuildSinks(pipeline, new) }
         if (old.accel != new.accel) message(tr("El cambio de GPU/CPU se aplica al reiniciar la app", "The GPU/CPU change applies after restarting the app"))
     }
@@ -186,7 +191,11 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
         val ifm = if (s.ifmEnabled) IFacialMocapServer(s.ifmTargetIp) else null
         if (ifm != null) p.sinks.add(ifm)
         if (s.vmcEnabled) {
-            p.sinks.add(VmcSender(s.vmcHost, s.vmcPort, s.vmcVrm1, s.vmcArkit, s.vmcBones) { ifm?.currentTarget })
+            p.sinks.add(
+                VmcSender(s.vmcHost, s.vmcPort, s.vmcVrm1, s.vmcArkit, s.vmcBones, s.handsEnabled && s.vmcHands, s.armReach) {
+                    ifm?.currentTarget
+                }
+            )
         }
         if (s.vtsEnabled && s.vtsHost.isNotBlank()) {
             p.sinks.add(VTubeStudioPlugin(s.vtsHost.trim(), s.vtsPort, store.vtsToken) { store.vtsToken = it })

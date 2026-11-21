@@ -22,6 +22,8 @@ class FaceFrame(
     val tongueY: Float,
     /** Expresiones VRM (ver [Vrm]). */
     val vrm: FloatArray = FloatArray(Vrm.COUNT),
+    /** Manos (si el seguimiento de manos está activado). */
+    val hands: HandsFrame = HandsFrame.NONE,
 ) {
     operator fun get(i: Int): Float = blend[i]
 

@@ -100,6 +100,7 @@ class OutputScheduler(private val sinks: CopyOnWriteArrayList<OutputSink>) {
             tongueX = a.tongueX + (b.tongueX - a.tongueX) * t,
             tongueY = a.tongueY + (b.tongueY - a.tongueY) * t,
             vrm = mix(a.vrm, b.vrm, t),
+            hands = b.hands,
         )
     }
 }

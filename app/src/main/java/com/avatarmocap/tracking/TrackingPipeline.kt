@@ -155,7 +155,9 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         feat[Feat.LIP_CB] = t.lipCb
         feat[Feat.LIP_Y] = t.lipY
         raw[ArKit.TONGUE_OUT] = t.value
-        if (s.showPreview) publishPreview(bitmap, pts, t.hull, t0)
+        // 2b) Manos (cada 2 cuadros por defecto, para no bajar los fps)
+        val hands = if (s.handsEnabled) trackHands(bitmap, ts, pts, w, h, t0, s) else HandsFrame.NONE
+        if (s.showPreview) publishPreview(bitmap, pts, t.hull, t0, hands)
 
         // 3) Pose de la cabeza
         val matrix = result.facialTransformationMatrixes().orElse(null)?.firstOrNull()
@@ -258,7 +260,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
                 timestampNanos = t0, faceFound = true, blend = blend,
                 headRot = floatArrayOf(pitch, yaw, roll),
                 headPos = floatArrayOf(hf[3] / 100f, hf[4] / 100f, hf[5] / 100f),
-                leftEye = leftEye, rightEye = rightEye, tongueX = tdx, tongueY = tdy, vrm = vrm,
+                leftEye = leftEye, rightEye = rightEye, tongueX = tdx, tongueY = tdy, vrm = vrm, hands = hands,
             )
         lastGood = frame
         emit(frame, t)
@@ -343,7 +345,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     }
 
     /** Copia el cuadro analizado (máx. ~20 por segundo) junto con SU malla, para que siempre coincidan. */
-    private fun publishPreview(src: Bitmap, pts: FloatArray?, hull: FloatArray?, nanos: Long) {
+    private fun publishPreview(src: Bitmap, pts: FloatArray?, hull: FloatArray?, nanos: Long, hands: HandsFrame? = null) {
         if (!settings.showPreview) return
         lastPreviewNanos = nanos
         previewIdx = (previewIdx + 1) % previewPool.size
@@ -353,7 +355,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
             previewPool[previewIdx] = dst
         }
         android.graphics.Canvas(dst!!).drawBitmap(src, 0f, 0f, null)
-        val pf = PreviewFrame(dst, pts?.copyOf(), hull, ++previewSeq)
+        val pf = PreviewFrame(dst, pts?.copyOf(), hull, ++previewSeq, hands)
         previewFrame = pf
         onPreview?.invoke(pf)
     }
@@ -372,6 +374,64 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         lastGood = null
     }
 
+    // ---------- Manos
+
+    private var handTracker: HandTracker? = null
+    private var handCounter = 0
+    private var lastHands = HandsFrame.NONE
+    private val handWorldSmooth = Array(2) { ArraySmoother(minCutoff = 1.5f, beta = 8f) }
+    private val handImageSmooth = Array(2) { ArraySmoother(minCutoff = 2f, beta = 20f) }
+    @Volatile var lastHandMs = 0f
+        private set
+
+    private fun trackHands(bitmap: Bitmap, ts: Long, pts: FloatArray, w: Int, h: Int, nanos: Long, s: AppSettings): HandsFrame {
+        handCounter++
+        if (s.handsHalfRate && handCounter % 2 == 1) return lastHands
+        val ht = handTracker ?: try {
+            HandTracker(appContext, tracker.gpu).also { handTracker = it }
+        } catch (e: Throwable) {
+            Log.e(TAG, "No se pudo iniciar el seguimiento de manos", e)
+            return HandsFrame.NONE
+        }
+        val h0 = SystemClock.elapsedRealtimeNanos()
+        val r = ht.detect(bitmap, ts)
+        lastHandMs = (SystemClock.elapsedRealtimeNanos() - h0) / 1e6f
+        if (r == null) return lastHands
+
+        // Cara: centro y ancho en píxeles (para ubicar las manos respecto de la cabeza)
+        val fx = (pts[234 * 3] + pts[454 * 3]) / 2f * w
+        val fy = (pts[10 * 3 + 1] + pts[152 * 3 + 1]) / 2f * h
+        val fdx = (pts[234 * 3] - pts[454 * 3]) * w
+        val fdy = (pts[234 * 3 + 1] - pts[454 * 3 + 1]) * h
+        val face = floatArrayOf(fx, fy, kotlin.math.sqrt(fdx * fdx + fdy * fdy))
+
+        var left = HandData.NONE
+        var right = HandData.NONE
+        val lms = r.landmarks()
+        val worlds = r.worldLandmarks()
+        val hands = r.handedness()
+        for (k in lms.indices) {
+            if (k >= worlds.size || k >= hands.size) break
+            // MediaPipe supone imagen espejada; la nuestra no lo está: "Left" = tu mano DERECHA
+            val label = hands[k].firstOrNull()?.categoryName() ?: continue
+            var userLeft = label.equals("Right", ignoreCase = true)
+            if (s.swapHands) userLeft = !userLeft
+            val slot = if (userLeft) 0 else 1
+            if ((userLeft && left.found) || (!userLeft && right.found)) continue
+            val img = FloatArray(42) { i -> if (i % 2 == 0) lms[k][i / 2].x() else lms[k][i / 2].y() }
+            val wl = worlds[k]
+            val wor = FloatArray(63) { i -> when (i % 3) { 0 -> wl[i / 3].x(); 1 -> wl[i / 3].y(); else -> wl[i / 3].z() } }
+            val img2 = handImageSmooth[slot].update(img, nanos)
+            val wor2 = handWorldSmooth[slot].update(wor, nanos)
+            val data = HandSolver.solve(wor2, img2, w, h, face, userLeft)
+            if (userLeft) left = data else right = data
+        }
+        if (!left.found) { handImageSmooth[0].reset(); handWorldSmooth[0].reset() }
+        if (!right.found) { handImageSmooth[1].reset(); handWorldSmooth[1].reset() }
+        lastHands = HandsFrame(left, right)
+        return lastHands
+    }
+
     private fun resetFilters() {
         blendFilters.forEach { it.reset() }
         headFilters.forEach { it.reset() }
@@ -387,6 +447,7 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         sinks.clear()
         tracker.close()
         other?.close()
+        handTracker?.close()
     }
 
     companion object {
@@ -405,4 +466,10 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
 }
 
 /** Imagen analizada + malla (x,y,z normalizados) + contorno de la lengua, del MISMO cuadro. */
-class PreviewFrame(val bitmap: Bitmap, val landmarks: FloatArray?, val tongueHull: FloatArray?, val seq: Long)
+class PreviewFrame(
+    val bitmap: Bitmap,
+    val landmarks: FloatArray?,
+    val tongueHull: FloatArray?,
+    val seq: Long,
+    val hands: HandsFrame? = null,
+)

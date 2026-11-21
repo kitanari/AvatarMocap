@@ -35,6 +35,7 @@ class FaceViewOptions(
     val mouth: Boolean,
     val camera: Boolean,
     val mirror: Boolean,
+    val hands: Boolean = true,
 )
 
 /**
@@ -70,6 +71,13 @@ fun FaceView(frame: PreviewFrame?, o: FaceViewOptions, modifier: Modifier = Modi
                     val x = pts[i * 3] * iw; val y = pts[i * 3 + 1] * ih
                     x0 = min(x0, x); x1 = max(x1, x); y0 = min(y0, y); y1 = max(y1, y)
                 }
+                // Si hay manos, el encuadre las incluye
+                if (o.hands) frame.hands?.let { hf ->
+                    for (hd in listOf(hf.left, hf.right)) if (hd.found) for (i in 0 until 21) {
+                        val x = hd.image[i * 2] * iw; val y = hd.image[i * 2 + 1] * ih
+                        x0 = min(x0, x); x1 = max(x1, x); y0 = min(y0, y); y1 = max(y1, y)
+                    }
+                }
                 val fw = (x1 - x0).coerceAtLeast(1f); val fh = (y1 - y0).coerceAtLeast(1f)
                 sx = min(size.width * 0.86f / fw, size.height * 0.86f / fh)
                 ox = size.width / 2f - (x0 + fw / 2f) * sx
@@ -86,6 +94,10 @@ fun FaceView(frame: PreviewFrame?, o: FaceViewOptions, modifier: Modifier = Modi
             }
             if (o.mouth) drawMouth(::px, ::py, frame.tongueHull, ox, oy, iw * sx, ih * sx, !o.camera)
             if (o.eyes) drawEyes(pts, n, ::px, ::py, !o.camera)
+            if (o.hands) frame.hands?.let { hf ->
+                drawHand(hf.left, ox, oy, iw * sx, ih * sx, Color(0xFFB9A2FF))
+                drawHand(hf.right, ox, oy, iw * sx, ih * sx, Color(0xFF8FD4FF))
+            }
         }
     }
 }
@@ -208,6 +220,30 @@ private fun DrawScope.drawMouth(
         drawPath(p, if (stylized) Color(0xFFFF6F91) else Color(0x5500FF66))
         drawPath(p, if (stylized) Color(0xFFFFB3C6) else Color(0xFF00FF66), style = Stroke(width = 2.5f))
     }
+}
+
+private val HAND_LINKS = intArrayOf(
+    0, 1, 1, 2, 2, 3, 3, 4, 0, 5, 5, 6, 6, 7, 7, 8, 5, 9, 9, 10, 10, 11, 11, 12,
+    9, 13, 13, 14, 14, 15, 15, 16, 13, 17, 0, 17, 17, 18, 18, 19, 19, 20,
+)
+
+/** Mano: huesos + articulaciones; la palma rellena suave. */
+private fun DrawScope.drawHand(hand: com.avatarmocap.tracking.HandData, ox: Float, oy: Float, sw: Float, sh: Float, color: Color) {
+    if (!hand.found) return
+    val im = hand.image
+    fun hx(i: Int) = ox + im[i * 2] * sw
+    fun hy(i: Int) = oy + im[i * 2 + 1] * sh
+    val palm = Path()
+    palm.moveTo(hx(0), hy(0)); palm.lineTo(hx(5), hy(5)); palm.lineTo(hx(9), hy(9))
+    palm.lineTo(hx(13), hy(13)); palm.lineTo(hx(17), hy(17)); palm.close()
+    drawPath(palm, color.copy(alpha = 0.25f))
+    var k = 0
+    while (k + 1 < HAND_LINKS.size) {
+        val a = HAND_LINKS[k]; val b = HAND_LINKS[k + 1]
+        drawLine(color, Offset(hx(a), hy(a)), Offset(hx(b), hy(b)), strokeWidth = 4f, cap = StrokeCap.Round)
+        k += 2
+    }
+    for (i in 0 until 21) drawCircle(Color.White, radius = if (i % 4 == 0) 5f else 3.5f, center = Offset(hx(i), hy(i)))
 }
 
 private inline fun DrawScope.clipPathSafe(path: Path, block: DrawScope.() -> Unit) {

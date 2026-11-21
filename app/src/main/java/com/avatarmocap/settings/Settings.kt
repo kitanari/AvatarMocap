@@ -75,6 +75,16 @@ data class AppSettings(
     val viewMouth: Boolean = true,
     /** Mostrar la imagen de la cámara detrás de la malla (si no, solo la cara 3D). */
     val viewCamera: Boolean = false,
+    // Manos
+    val handsEnabled: Boolean = true,
+    /** Analiza las manos cada 2 cuadros (más fps). */
+    val handsHalfRate: Boolean = true,
+    /** Envía brazos, manos y dedos por la salida VRM. */
+    val vmcHands: Boolean = true,
+    val swapHands: Boolean = false,
+    /** Cuánto se mueven los brazos del avatar respecto de tus manos. */
+    val armReach: Float = 1.3f,
+    val viewHands: Boolean = true,
 
     // Ajuste fino por grupo (multiplicadores), en el orden de ArKit.G_*
     val gainEyes: Float = 1f,
@@ -140,6 +150,12 @@ class SettingsStore(context: Context) {
             viewEyes = prefs.getBoolean("viewEyes", d.viewEyes),
             viewMouth = prefs.getBoolean("viewMouth", d.viewMouth),
             viewCamera = prefs.getBoolean("viewCamera", d.viewCamera),
+            handsEnabled = prefs.getBoolean("handsEnabled", d.handsEnabled),
+            handsHalfRate = prefs.getBoolean("handsHalfRate", d.handsHalfRate),
+            vmcHands = prefs.getBoolean("vmcHands", d.vmcHands),
+            swapHands = prefs.getBoolean("swapHands", d.swapHands),
+            armReach = prefs.getFloat("armReach", d.armReach),
+            viewHands = prefs.getBoolean("viewHands", d.viewHands),
             gainEyes = prefs.getFloat("gainEyes", 1f),
             gainBrows = prefs.getFloat("gainBrows", 1f),
             gainMouthOpen = prefs.getFloat("gainMouthOpen", 1f),
@@ -191,6 +207,12 @@ class SettingsStore(context: Context) {
             .putBoolean("viewEyes", s.viewEyes)
             .putBoolean("viewMouth", s.viewMouth)
             .putBoolean("viewCamera", s.viewCamera)
+            .putBoolean("handsEnabled", s.handsEnabled)
+            .putBoolean("handsHalfRate", s.handsHalfRate)
+            .putBoolean("vmcHands", s.vmcHands)
+            .putBoolean("swapHands", s.swapHands)
+            .putFloat("armReach", s.armReach)
+            .putBoolean("viewHands", s.viewHands)
             .putFloat("gainEyes", s.gainEyes)
             .putFloat("gainBrows", s.gainBrows)
             .putFloat("gainMouthOpen", s.gainMouthOpen)

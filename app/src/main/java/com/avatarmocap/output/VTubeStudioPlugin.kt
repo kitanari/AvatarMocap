@@ -199,6 +199,21 @@ class VTubeStudioPlugin(
         put("CheekPuff", b[ArKit.CHEEK_PUFF])
         put("TongueOut", b[ArKit.TONGUE_OUT])
 
+        // ---- Manos (parámetros de manos del programa Live2D)
+        for ((hand, side) in listOf(frame.hands.left to "Left", frame.hands.right to "Right")) {
+            put("Hand${side}Found", if (hand.found) 1f else 0f)
+            if (!hand.found) continue
+            put("Hand${side}PositionX", hand.pos.x * 30f)
+            put("Hand${side}PositionY", hand.pos.y * 30f)
+            put("Hand${side}PositionZ", hand.pos.z * 20f)
+            put("Hand${side}Open", hand.openness)
+            val names = arrayOf("1_Thumb", "2_Index", "3_Middle", "4_Ring", "5_Pinky")
+            for (f in 0 until 5) {
+                val curl = (hand.bend[f * 3] + hand.bend[f * 3 + 1] + hand.bend[f * 3 + 2]) / 220f
+                put("Hand${side}Finger_${names[f]}", (1f - curl).coerceIn(0f, 1f))
+            }
+        }
+
         // ---- Parámetros personalizados (52 ARKit crudos + lengua)
         for (i in 0 until ArKit.COUNT) put(CUSTOM_NAMES[i], b[i])
         put("MFTongueX", frame.tongueX)

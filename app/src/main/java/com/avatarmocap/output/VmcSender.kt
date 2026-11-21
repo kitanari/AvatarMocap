@@ -28,6 +28,9 @@ class VmcSender(
     private val vrm1: Boolean,
     private val sendArkit: Boolean,
     private val sendBones: Boolean,
+    /** Brazos, manos y dedos (seguimiento de manos). */
+    private val sendHands: Boolean,
+    private val armReach: Float,
     /** Si no hay IP fija, se usa la PC conectada por iFacialMocap. */
     private val fallbackTarget: () -> InetAddress?,
 ) : OutputSink {
@@ -87,6 +90,18 @@ class VmcSender(
             bone("RightEye", frame.rightEye[0], frame.rightEye[1], 0f)
         }
 
+        if (sendHands) {
+            for ((hand, left) in listOf(frame.hands.left to true, frame.hands.right to false)) {
+                if (!hand.found) continue
+                val side = if (left) "Left" else "Right"
+                val pose = com.avatarmocap.tracking.ArmIK.solve(hand, left, armReach)
+                boneQ("${side}UpperArm", pose.upper)
+                boneQ("${side}LowerArm", pose.lower)
+                boneQ("${side}Hand", pose.hand)
+                for (i in 0 until 15) boneQ(com.avatarmocap.tracking.ArmIK.fingerBone(left, i), pose.fingers[i])
+            }
+        }
+
         val bytes = out.toByteArray()
         try {
             socket.send(DatagramPacket(bytes, bytes.size, dst, port))
@@ -126,6 +141,14 @@ class VmcSender(
             str(name)
             float(0f); float(0f); float(0f)
             float(q[0]); float(q[1]); float(q[2]); float(q[3])
+        }
+    }
+
+    private fun boneQ(name: String, q: com.avatarmocap.tracking.Quat) {
+        element("/VMC/Ext/Bone/Pos") {
+            str(name)
+            float(0f); float(0f); float(0f)
+            float(q.x); float(q.y); float(q.z); float(q.w)
         }
     }
 

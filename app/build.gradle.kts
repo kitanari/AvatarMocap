@@ -87,4 +87,23 @@ val downloadFaceModel by tasks.registering {
     }
 }
 
-tasks.named("preBuild") { dependsOn(downloadFaceModel) }
+val handModelUrl =
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+val handModelFile = layout.projectDirectory.file("src/main/assets/hand_landmarker.task")
+
+val downloadHandModel by tasks.registering {
+    description = "Descarga hand_landmarker.task en assets si no existe"
+    outputs.file(handModelFile)
+    doLast {
+        val f = handModelFile.asFile
+        if (!f.exists()) {
+            f.parentFile.mkdirs()
+            logger.lifecycle("Descargando modelo de manos -> ${f.path}")
+            URI(handModelUrl).toURL().openStream().use { input ->
+                f.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(downloadFaceModel, downloadHandModel) }

@@ -85,8 +85,9 @@ fun MainScreen(vm: TrackingViewModel) {
     var tab by remember { mutableIntStateOf(0) }
     var compact by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
-    // Durante la calibración siempre se muestra la pestaña de la cara
-    if (ui.wizardStep != null && tab == 2) tab = 0
+    // Al EMPEZAR a capturar se muestra la cara (las flechas aparecen ahí); después podés navegar libremente
+    val capturing = ui.capture != null
+    LaunchedEffect(capturing) { if (capturing) tab = 0 }
 
     Box(Modifier.fillMaxSize().background(Ui.background)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 12.dp)) {
@@ -175,6 +176,7 @@ private fun ExpressionsTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
         if (ui.wizardStep != null || ui.calibratedSteps.isEmpty()) item { CalibrationCard(ui, vm, s.quickCalibration) }
         if (ui.message.isNotEmpty()) item { Text(ui.message, color = Ui.Accent, fontSize = 14.sp) }
         item { LiveExpressions(ui, vm) }
+        if (s.handsEnabled) item { HandsCard(ui) }
     }
 }
 
@@ -206,6 +208,7 @@ private fun FaceCard(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
                 ViewCheck(tr("Puntos", "Points"), s.viewPoints) { v -> vm.update { it.copy(viewPoints = v) } }
                 ViewCheck(tr("Ojos", "Eyes"), s.viewEyes) { v -> vm.update { it.copy(viewEyes = v) } }
                 ViewCheck(tr("Boca", "Mouth"), s.viewMouth) { v -> vm.update { it.copy(viewMouth = v) } }
+                ViewCheck(tr("Manos", "Hands"), s.viewHands) { v -> vm.update { it.copy(viewHands = v) } }
                 ViewCheck(tr("Cámara", "Camera"), s.viewCamera) { v -> vm.update { it.copy(viewCamera = v) } }
             }
         }
@@ -219,7 +222,7 @@ private fun LiveFace(vm: TrackingViewModel, s: AppSettings) {
         pf,
         FaceViewOptions(
             mesh = s.viewMesh, points = s.viewPoints, eyes = s.viewEyes, mouth = s.viewMouth,
-            camera = s.viewCamera, mirror = !s.rearCamera,
+            camera = s.viewCamera, mirror = !s.rearCamera, hands = s.viewHands && s.handsEnabled,
         ),
         Modifier.fillMaxSize(),
     )
@@ -293,6 +296,29 @@ private fun VowelChip(label: String, value: Float, modifier: Modifier) {
 }
 
 @Composable
+private fun HandsCard(ui: UiState) {
+    PurpleCard(tr("Manos en tiempo real", "Real-time hands"), "✋") {
+        for ((hand, label) in listOf(ui.hands.left to tr("Mano izquierda", "Left hand"), ui.hands.right to tr("Mano derecha", "Right hand"))) {
+            if (!hand.found) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, color = Ui.Text, fontSize = 14.sp, modifier = Modifier.width(120.dp))
+                    Text(tr("no visible", "not visible"), color = Ui.Muted, fontSize = 13.sp)
+                }
+            } else {
+                ExpressionRow(label + tr(" (abierta)", " (open)"), hand.openness)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val names = listOf(tr("Pulgar", "Thumb"), tr("Índice", "Index"), tr("Medio", "Middle"), tr("Anular", "Ring"), tr("Meñique", "Pinky"))
+                    for (f in 0 until 5) {
+                        val curl = ((hand.bend[f * 3] + hand.bend[f * 3 + 1] + hand.bend[f * 3 + 2]) / 220f).coerceIn(0f, 1f)
+                        VowelChip(names[f], 1f - curl, Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ExpressionRow(label: String, value: Float) {
     val v = value.coerceIn(0f, 1f)
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -335,6 +361,16 @@ private fun SettingsTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
         item { CalibrationCard(ui, vm, s.quickCalibration) }
         if (ui.message.isNotEmpty()) item { Text(ui.message, color = Ui.Accent, fontSize = 14.sp) }
         item { ConnectionCard(ui, s, vm) }
+        item {
+            PurpleCard(tr("Manos", "Hands"), "✋") {
+                ToggleRow(tr("Seguimiento de manos", "Hand tracking"), s.handsEnabled) { v -> vm.update { it.copy(handsEnabled = v) } }
+                Text(
+                    tr("Poné las manos a la vista de la cámara. Mueven los brazos, las manos y los dedos del avatar.",
+                        "Keep your hands in view of the camera. They move the avatar's arms, hands and fingers."),
+                    color = Ui.Muted, fontSize = 12.sp,
+                )
+            }
+        }
         item {
             PurpleCard(tr("Intensidad", "Intensity"), "♥") {
                 GainSlider(tr("Ojos", "Eyes"), s.gainEyes) { v -> vm.update { it.copy(gainEyes = v) } }
@@ -440,6 +476,21 @@ private fun AdvancedTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
             }
         }
         item {
+            PurpleCard(tr("Manos (avanzado)", "Hands (advanced)")) {
+                ToggleRow(tr("Analizar manos cada 2 cuadros (más fps)", "Analyze hands every 2 frames (more fps)"), s.handsHalfRate) { v ->
+                    vm.update { it.copy(handsHalfRate = v) }
+                }
+                ToggleRow(tr("Enviar brazos, manos y dedos al avatar VRM", "Send arms, hands and fingers to the VRM avatar"), s.vmcHands) { v ->
+                    vm.update { it.copy(vmcHands = v) }
+                }
+                ToggleRow(tr("Intercambiar mano izquierda/derecha", "Swap left/right hand"), s.swapHands) { v -> vm.update { it.copy(swapHands = v) } }
+                Text(tr("Alcance de los brazos: %.0f%%", "Arm reach: %.0f%%").format(s.armReach * 100), color = Ui.Text, fontSize = 13.sp)
+                Slider(s.armReach, { v -> vm.update { it.copy(armReach = v) } }, valueRange = 0.6f..2.2f)
+                Text(tr("Manos: %.0f ms por análisis", "Hands: %.0f ms per analysis").format(ui.handMs), color = Ui.Muted, fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace)
+            }
+        }
+        item {
             PurpleCard(tr("Rendimiento", "Performance")) {
                 Text(
                     tr("tracking %.0f fps · cámara %.0f fps · envío %.0f fps", "tracking %.0f fps · camera %.0f fps · send %.0f fps")
@@ -503,48 +554,53 @@ private fun AdvancedTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
 @Composable
 private fun BottomBar(ui: UiState, s: AppSettings, vm: TrackingViewModel, onCalibrate: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().height(84.dp).clip(RoundedCornerShape(22.dp)).background(Ui.Card)
+        Modifier.fillMaxWidth().height(76.dp).clip(RoundedCornerShape(22.dp)).background(Ui.Card)
             .border(BorderStroke(1.dp, Ui.CardBorder), RoundedCornerShape(22.dp)).padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Estado
-        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("▂▄▆", color = if (ui.faceFound) Ui.Accent else Ui.Muted, fontSize = 14.sp)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (ui.connected) tr("Conectado", "Connected") else tr("Sin PC", "No PC"), color = Ui.Text, fontSize = 12.sp)
-                Spacer(Modifier.width(4.dp))
-                Box(Modifier.size(7.dp).clip(CircleShape).background(if (ui.connected) Ui.Good else Ui.Bad))
-            }
-            Text("MoonyFace", color = Ui.Muted, fontSize = 10.sp)
+        // Estado de conexión
+        BarItem(Modifier.weight(1f), tr("PC", "PC") + if (ui.connected) " ✓" else " ✕", null) {
+            Box(Modifier.size(14.dp).clip(CircleShape).background(if (ui.connected) Ui.Good else Ui.Bad))
         }
         Divider()
-        // Cámara
-        Column(Modifier.weight(1f).clickable { vm.switchCamera() }, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("▣", color = Ui.Accent, fontSize = 16.sp)
-            Text(tr("Cámara", "Camera"), color = Ui.Text, fontSize = 12.sp)
-            Text((if (s.rearCamera) tr("Trasera", "Rear") else tr("Frontal", "Front")) + " ⌄", color = Ui.Muted, fontSize = 11.sp)
+        // Cámara frontal / trasera
+        BarItem(Modifier.weight(1f), if (s.rearCamera) tr("Trasera", "Rear") else tr("Frontal", "Front"), { vm.switchCamera() }) {
+            Text("▣", color = Ui.Accent, fontSize = 18.sp)
         }
         Divider()
         // Pausa / reanudar
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             Box(
-                Modifier.size(60.dp).clip(CircleShape).border(BorderStroke(3.dp, Ui.Accent), CircleShape)
+                Modifier.size(54.dp).clip(CircleShape).border(BorderStroke(3.dp, Ui.Accent), CircleShape)
                     .background(Color(0xFF2E2056)).clickable { vm.togglePause() },
                 contentAlignment = Alignment.Center,
             ) { PlayPauseIcon(ui.paused) }
         }
         Divider()
         // Reiniciar
-        Column(Modifier.weight(1f).clickable { vm.restartTracking() }, horizontalAlignment = Alignment.CenterHorizontally) {
+        BarItem(Modifier.weight(1f), tr("Reiniciar", "Restart"), { vm.restartTracking() }) {
             Text("⟳", color = Ui.Accent, fontSize = 20.sp)
-            Text(tr("Reiniciar", "Restart"), color = Ui.Text, fontSize = 12.sp)
         }
         Divider()
         // Estrella: calibrar
-        Column(Modifier.weight(1f).clickable { onCalibrate() }, horizontalAlignment = Alignment.CenterHorizontally) {
-            StarIcon(Modifier.size(26.dp))
-            Text(tr("Calibrar", "Calibrate"), color = Ui.Text, fontSize = 12.sp)
-        }
+        BarItem(Modifier.weight(1f), tr("Calibrar", "Calibrate"), onCalibrate) { StarIcon(Modifier.size(22.dp)) }
+    }
+}
+
+/** Botón de la barra: ícono arriba y UNA palabra corta abajo (nunca se corta ni se amontona). */
+@Composable
+private fun BarItem(modifier: Modifier, label: String, onClick: (() -> Unit)?, icon: @Composable () -> Unit) {
+    Column(
+        modifier.fillMaxHeight().let { if (onClick != null) it.clickable(onClick = onClick) else it },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(Modifier.height(24.dp), contentAlignment = Alignment.Center) { icon() }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label, color = Ui.Text, fontSize = 11.sp, maxLines = 1, softWrap = false,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -566,7 +622,7 @@ fun StarIcon(modifier: Modifier, color: Color = Ui.Accent) {
 
 @Composable
 private fun Divider() {
-    Box(Modifier.width(1.dp).height(44.dp).background(Ui.CardBorder))
+    Box(Modifier.width(1.dp).height(36.dp).background(Ui.CardBorder))
 }
 
 @Composable
