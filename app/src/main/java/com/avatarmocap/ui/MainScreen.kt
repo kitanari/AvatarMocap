@@ -123,7 +123,7 @@ fun MainScreen(vm: TrackingViewModel) {
 @Composable
 private fun TopBar(onSettings: () -> Unit, onHelp: () -> Unit, onMinimize: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Image(painterResource(R.drawable.ic_moonyface_logo), null, Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)))
+        Image(painterResource(R.drawable.ic_moonyface_logo), null, Modifier.size(42.dp))
         Spacer(Modifier.width(8.dp))
         Text("MoonyFace", color = Ui.Text, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         RoundIcon("⚙", onSettings)
