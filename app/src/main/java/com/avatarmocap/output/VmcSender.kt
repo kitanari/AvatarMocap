@@ -32,7 +32,7 @@ class VmcSender(
     private val fallbackTarget: () -> InetAddress?,
 ) : OutputSink {
 
-    override val name = "VMC"
+    override val name = "VRM"
     private val _status = MutableStateFlow("")
     override val status: StateFlow<String> = _status
 
@@ -58,7 +58,7 @@ class VmcSender(
                 }
             }
         } else {
-            _status.value = tr("Esperando a que la PC se conecte por iFacialMocap (o poné una IP fija)", "Waiting for the PC to connect via iFacialMocap (or set a fixed IP)")
+            _status.value = tr("Esperando a que la PC se conecte (o poné una IP fija)", "Waiting for the PC to connect (or set a fixed IP)")
         }
     }
 

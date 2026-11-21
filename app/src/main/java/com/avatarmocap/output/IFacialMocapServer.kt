@@ -30,7 +30,7 @@ import kotlin.math.roundToInt
  */
 class IFacialMocapServer(manualTargetIp: String) : OutputSink {
 
-    override val name = "iFacialMocap"
+    override val name = "Face"
     private val _status = MutableStateFlow(tr("Esperando conexión desde la PC (puerto $PORT)…", "Waiting for the PC to connect (port $PORT)…"))
     override val status: StateFlow<String> = _status
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Receptor de prueba para la salida iFacialMocap de AvatarMocap (sin instalar VSeeFace).
+Receptor de prueba para la salida de rostro de MoonyFace (puerto 49983).
 
 Uso (en la PC, misma red Wi-Fi que el teléfono):
     python ifm_receiver_test.py 192.168.1.50        # IP del teléfono que muestra la app
 
-Envía el handshake de iFacialMocap al teléfono y muestra en vivo algunos valores.
+Envía el saludo de conexión al teléfono y muestra en vivo algunos valores.
 """
 import socket
 import sys

@@ -58,6 +58,7 @@ data class UiState(
     /** Alguna salida tiene una PC recibiendo. */
     val connected: Boolean = false,
     val exposure: String = "",
+    val puffDiag: FloatArray = FloatArray(5),
     /** Blendshapes crudos de MediaPipe (para el editor de gestos). */
     val raw: FloatArray = FloatArray(ArKit.COUNT),
     val profiles: List<String> = emptyList(),
@@ -149,6 +150,7 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
             sendFps = p.scheduler.sendFps,
             connected = sinks.any { it.connected },
             exposure = camera.exposureInfo,
+            puffDiag = p.puffDiag,
             raw = p.lastRaw,
             tongueMs = p.lastTongueMs,
         ) }
@@ -193,13 +195,13 @@ class TrackingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun discoverVts() {
-        message(tr("Buscando VTube Studio en la red…", "Searching for VTube Studio on the network…"))
+        message(tr("Buscando el programa Live2D en la red…", "Searching for the Live2D app on the network…"))
         viewModelScope.launch(Dispatchers.IO) {
             val found = VTubeStudioPlugin.discover(getApplication<Application>())
             if (found == null) {
-                message(tr("No se encontró VTS. ¿Está la API activada y la PC en la misma red Wi-Fi?", "VTS not found. Is the API enabled and the PC on the same Wi-Fi?"))
+                message(tr("No se encontró. ¿Está la API de plugins activada y la PC en la misma red Wi-Fi?", "Not found. Is the plugin API enabled and the PC on the same Wi-Fi?"))
             } else {
-                message(tr("VTube Studio encontrado en ${found.first}:${found.second}", "VTube Studio found at ${found.first}:${found.second}"))
+                message(tr("Programa Live2D encontrado en ${found.first}:${found.second}", "Live2D app found at ${found.first}:${found.second}"))
                 update { it.copy(vtsHost = found.first, vtsPort = found.second, vtsEnabled = true) }
             }
         }

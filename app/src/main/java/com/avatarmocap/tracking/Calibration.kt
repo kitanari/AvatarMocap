@@ -129,6 +129,10 @@ class Calibration {
     val earClosed = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var gapMax = Float.NaN
     val puffMax = floatArrayOf(Float.NaN, Float.NaN)
+    /** Patrón de blendshapes de TUS cachetes inflados (respecto de neutral). */
+    val puffT = FloatArray(ArKit.COUNT)
+    @Volatile var hasPuffT = false
+        private set
     /** Valor del surco con los cachetes inflados (paso PUFF, de frente). */
     val puffFold = floatArrayOf(Float.NaN, Float.NaN)
     @Volatile var tongueF0 = 0.05f
@@ -325,7 +329,9 @@ class Calibration {
                 val fl = n.featMean[Feat.FOLD_L] - d.featMean[Feat.FOLD_L]
                 val fr = n.featMean[Feat.FOLD_R] - d.featMean[Feat.FOLD_R]
                 val foldOk = !fl.isNaN() && !fr.isNaN() && min(fl, fr) > 0.02f * n.featMean[Feat.FOLD_L]
-                if (!foldOk && min(pl, pr) < 0.004f && d.upper[ArKit.CHEEK_PUFF] - n.mean[ArKit.CHEEK_PUFF] < 0.1f) {
+                var change = 0f
+                for (i in 0 until ArKit.COUNT) change += max(0f, d.mean[i] - n.mean[i])
+                if (!foldOk && change < 0.2f && min(pl, pr) < 0.004f && d.upper[ArKit.CHEEK_PUFF] - n.mean[ArKit.CHEEK_PUFF] < 0.1f) {
                     return false to tr("No se notó el inflado. Inflá más los cachetes.", "No puff detected. Puff your cheeks more.")
                 }
             }
@@ -377,6 +383,9 @@ class Calibration {
         val tb = steps[CalibStep.TONGUE]?.get(Pose.CENTER)
         tongueF1 = tb?.featUpper?.get(Feat.TONGUE)?.takeIf { !it.isNaN() } ?: max(0.35f, tongueF0 + 0.2f)
         val pc = steps[CalibStep.PUFF]?.get(Pose.CENTER)
+        val nc0 = neutralBins?.get(Pose.CENTER)
+        hasPuffT = pc != null && nc0 != null
+        for (i in 0 until ArKit.COUNT) puffT[i] = if (pc != null && nc0 != null) max(0f, pc.mean[i] - nc0.mean[i]) else 0f
         puffFold[0] = pc?.featMean?.get(Feat.FOLD_L) ?: Float.NaN
         puffFold[1] = pc?.featMean?.get(Feat.FOLD_R) ?: Float.NaN
         val nc = neutralBins?.get(Pose.CENTER)
@@ -528,6 +537,31 @@ class Calibration {
         return sig
     }
 
+    /**
+     * Cuánto se parece la cara actual a TUS cachetes inflados grabados (proyección × parecido),
+     * y si se parece más a la "U" (labios hacia adelante) se baja: son gestos parecidos.
+     */
+    fun puffTemplate(raw: FloatArray): Float {
+        if (!hasPuffT || !hasNeutral) return 0f
+        var xt = 0f; var tt = 0f; var xx = 0f; var xu = 0f; var uu = 0f
+        val u = visemeT[2]
+        for (i in PUFF_SUBSET) {
+            val x = max(0f, raw[i] - neutral[i])
+            xt += x * puffT[i]; tt += puffT[i] * puffT[i]; xx += x * x
+            xu += x * u[i]; uu += u[i] * u[i]
+        }
+        if (tt < 1e-4f || xx < 1e-6f) return 0f
+        val xn = kotlin.math.sqrt(xx)
+        val cosP = (xt / (xn * kotlin.math.sqrt(tt))).coerceIn(0f, 1f)
+        val proj = (xt / tt).coerceIn(0f, 1f)
+        var score = proj * cosP * cosP
+        if (hasViseme[2] && uu > 1e-4f) {
+            val cosU = (xu / (xn * kotlin.math.sqrt(uu))).coerceIn(0f, 1f)
+            if (cosU > cosP + 0.05f) score *= 0.3f
+        }
+        return score
+    }
+
     fun puffSignal(feat: FloatArray): Float {
         var sig = 1f
         val idx = intArrayOf(Feat.PUFF_L, Feat.PUFF_R)
@@ -620,6 +654,11 @@ class Calibration {
         private const val AUTO_MIN_RANGE = 0.6f
         private const val DEFAULT_PUFF_SPAN = 0.025f
         private const val DEFAULT_MOUTH_SPAN = 0.08f
+        private val PUFF_SUBSET = arrayOf(
+            "cheekPuff", "mouthPucker", "mouthFunnel", "mouthClose", "mouthRollLower", "mouthRollUpper",
+            "mouthPressLeft", "mouthPressRight", "mouthShrugLower", "mouthShrugUpper", "jawOpen",
+            "mouthStretchLeft", "mouthStretchRight", "mouthSmileLeft", "mouthSmileRight", "cheekSquintLeft", "cheekSquintRight",
+        ).map { ArKit.idx(it) }.toIntArray()
         private const val MOUTH_DEAD = 0.006f
         private const val IRIS_H_RANGE = 0.18f
         private const val IRIS_V_RANGE = 0.12f

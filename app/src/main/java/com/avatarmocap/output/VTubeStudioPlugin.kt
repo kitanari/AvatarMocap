@@ -39,7 +39,7 @@ class VTubeStudioPlugin(
     private val onNewToken: (String) -> Unit,
 ) : OutputSink {
 
-    override val name = "VTube Studio"
+    override val name = "Live2D"
     private val _status = MutableStateFlow(tr("Conectando a $host:$port…", "Connecting to $host:$port…"))
     override val status: StateFlow<String> = _status
 
@@ -82,7 +82,7 @@ class VTubeStudioPlugin(
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             authenticated = false
-            if (!closed) _status.value = tr("Conexión cerrada por VTS ($reason)", "Connection closed by VTS ($reason)")
+            if (!closed) _status.value = tr("La PC cerró la conexión ($reason)", "The PC closed the connection ($reason)")
         }
     }
 
@@ -100,7 +100,7 @@ class VTubeStudioPlugin(
                     _status.value = tr("Autenticado ✓ — enviando tracking", "Authenticated ✓ — sending tracking")
                     createCustomParameters()
                 } else {
-                    _status.value = tr("Token rechazado, pidiendo uno nuevo (aceptá el popup en VTS)…", "Token rejected, requesting a new one (accept the popup in VTS)…")
+                    _status.value = tr("Permiso rechazado, pidiendo uno nuevo (aceptá el aviso en la PC)…", "Permission rejected, requesting a new one (accept the popup on the PC)…")
                     token = ""
                     onNewToken("")
                     requestToken()
@@ -109,7 +109,7 @@ class VTubeStudioPlugin(
             "APIError" -> {
                 val m = data.optString("message")
                 // Errores de parámetros inexistentes al arrancar son normales; el resto se muestra.
-                if (!m.contains("parameter", ignoreCase = true)) _status.value = "VTS: $m"
+                if (!m.contains("parameter", ignoreCase = true)) _status.value = "Live2D: $m"
             }
         }
     }
@@ -125,7 +125,7 @@ class VTubeStudioPlugin(
     }
 
     private fun requestToken() {
-        _status.value = tr("Pedí permiso en VTube Studio: aceptá el popup en la PC", "Requested access in VTube Studio: accept the popup on the PC")
+        _status.value = tr("Pedí permiso al programa Live2D: aceptá el aviso de MoonyFace en la PC", "Requested access: accept the MoonyFace popup on the PC")
         request("AuthenticationTokenRequest", JSONObject()
             .put("pluginName", PLUGIN_NAME)
             .put("pluginDeveloper", PLUGIN_DEV))
@@ -139,9 +139,9 @@ class VTubeStudioPlugin(
     }
 
     private fun createCustomParameters() {
-        for (n in ArKit.NAMES) createParam(customName(n), "ARKit $n (AvatarMocap)", 0.0, 1.0, 0.0)
-        createParam("AMTongueX", "Dirección horizontal de la lengua", -1.0, 1.0, 0.0)
-        createParam("AMTongueY", "Dirección vertical de la lengua", -1.0, 1.0, 0.0)
+        for (n in ArKit.NAMES) createParam(customName(n), "$n (MoonyFace)", 0.0, 1.0, 0.0)
+        createParam("MFTongueX", "Dirección horizontal de la lengua", -1.0, 1.0, 0.0)
+        createParam("MFTongueY", "Dirección vertical de la lengua", -1.0, 1.0, 0.0)
     }
 
     private fun createParam(name: String, explanation: String, min: Double, max: Double, def: Double) {
@@ -201,8 +201,8 @@ class VTubeStudioPlugin(
 
         // ---- Parámetros personalizados (52 ARKit crudos + lengua)
         for (i in 0 until ArKit.COUNT) put(CUSTOM_NAMES[i], b[i])
-        put("AMTongueX", frame.tongueX)
-        put("AMTongueY", frame.tongueY)
+        put("MFTongueX", frame.tongueX)
+        put("MFTongueY", frame.tongueY)
 
         request("InjectParameterDataRequest", JSONObject()
             .put("faceFound", true)
@@ -219,11 +219,11 @@ class VTubeStudioPlugin(
 
     companion object {
         private const val TAG = "VTS"
-        const val PLUGIN_NAME = "AvatarMocap"
-        const val PLUGIN_DEV = "AvatarMocap"
+        const val PLUGIN_NAME = "MoonyFace"
+        const val PLUGIN_DEV = "MoonyFace"
 
         /** "AM" + nombre ARKit. VTS acepta 4..32 caracteres alfanuméricos. */
-        fun customName(arkit: String) = "AM$arkit"
+        fun customName(arkit: String) = "MF$arkit"
         private val CUSTOM_NAMES = Array(ArKit.COUNT) { customName(ArKit.NAMES[it]) }
 
         /**

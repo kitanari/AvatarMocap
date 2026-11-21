@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(tr("AvatarMocap necesita la cámara frontal para rastrear tu cara.", "AvatarMocap needs the front camera to track your face."))
+                Text(tr("MoonyFace necesita la cámara para seguir tu cara.", "MoonyFace needs the camera to track your face."))
                 Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }, Modifier.padding(top = 16.dp)) {
                     Text(tr("Dar permiso", "Grant permission"))
                 }

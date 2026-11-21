@@ -71,6 +71,9 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
     /** Brillo medio de la piel de la cara (0..255), para la exposición automática. */
     @Volatile var faceLuma = 0f
         private set
+    /** Componentes de la detección de cachetes (MediaPipe, malla, surco, patrón, compuerta). */
+    @Volatile var puffDiag = FloatArray(5)
+        private set
     /** En pausa no se procesa nada. */
     @Volatile var paused = false
     private val raw = FloatArray(ArKit.COUNT)
@@ -167,17 +170,22 @@ class TrackingPipeline(context: Context, initial: AppSettings) : Closeable {
         // 5) Fusión con las medidas geométricas (más lineales y precisas una vez calibradas)
         if (s.precise) fuseGeometry()
 
-        // 6) Cachetes: MediaPipe + geometría, anulados si la boca se abre, sonríe, hace "beso" o va a un costado
-        val jaw = cal[ArKit.JAW_OPEN]
+        // 6) Cachetes inflados: MediaPipe, malla (contorno), imagen (surco nariz-boca) y tu patrón
+        //    calibrado. Se anulan si la boca se abre, sonríe o se va muy a un costado.
         val smile = (cal[ArKit.SMILE_L] + cal[ArKit.SMILE_R]) / 2f
         var side = 0f
         for (i in ArKit.SIDEWAYS) side = max(side, cal[i])
-        val gate = gateDown(jaw, 0.2f, 4f) * gateDown(smile, 0.3f, 3f) *
-            gateDown(side, 0.12f, 4f) * gateDown(cal[ArKit.MOUTH_PUCKER], 0.5f, 2f)
-        // Labios juntos: con la boca abierta no se pueden inflar los cachetes
-        val lipsGate = gateDown(feat[Feat.GAP] - (calibration.featNeutral[Feat.GAP].takeIf { !it.isNaN() } ?: feat[Feat.GAP]), 0.03f, 10f)
-        val puffAll = max(cal[ArKit.CHEEK_PUFF], max(calibration.puffSignal(feat), calibration.foldSignal(feat)))
-        cal[ArKit.CHEEK_PUFF] = puffAll * gate * lipsGate
+        val gap0 = calibration.featNeutral[Feat.GAP].takeIf { !it.isNaN() } ?: feat[Feat.GAP]
+        val lipsGate = gateDown(feat[Feat.GAP] - gap0, 0.04f, 8f)
+        val gate = gateDown(smile, 0.35f, 3f) * gateDown(side, 0.35f, 3f) * lipsGate
+        val pMp = cal[ArKit.CHEEK_PUFF]
+        val pGeo = calibration.puffSignal(feat)
+        val pFold = calibration.foldSignal(feat)
+        val pTmpl = calibration.puffTemplate(raw)
+        val image = max(pGeo, pFold)
+        val puffAll = maxOf(pMp, image, pTmpl * (0.6f + 0.4f * image))
+        cal[ArKit.CHEEK_PUFF] = (puffAll * gate).coerceIn(0f, 1f)
+        puffDiag = floatArrayOf(pMp, pGeo, pFold, pTmpl, gate)
 
         // 7) Ajuste fino por grupo + boca estable (anti-clipping al final)
         val g = gains

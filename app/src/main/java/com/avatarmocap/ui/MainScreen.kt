@@ -63,7 +63,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.avatarmocap.R
 import com.avatarmocap.TrackingViewModel
+import androidx.compose.ui.res.painterResource
 import com.avatarmocap.UiState
 import com.avatarmocap.i18n.tr
 import com.avatarmocap.output.IFacialMocapServer
@@ -109,7 +111,7 @@ fun MainScreen(vm: TrackingViewModel) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            BottomBar(ui, s, vm)
+            BottomBar(ui, s, vm) { tab = 0; compact = false; vm.startWizard() }
             Spacer(Modifier.height(8.dp))
         }
         if (help) HelpDialog { help = false }
@@ -121,9 +123,9 @@ fun MainScreen(vm: TrackingViewModel) {
 @Composable
 private fun TopBar(onSettings: () -> Unit, onHelp: () -> Unit, onMinimize: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("✦", color = Ui.Accent, fontSize = 22.sp)
+        Image(painterResource(R.drawable.ic_moonyface_logo), null, Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)))
         Spacer(Modifier.width(8.dp))
-        Text("AvatarMocap", color = Ui.Text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        Text("MoonyFace", color = Ui.Text, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         RoundIcon("⚙", onSettings)
         Spacer(Modifier.width(8.dp))
         RoundIcon("?", onHelp)
@@ -143,7 +145,7 @@ private fun RoundIcon(glyph: String, onClick: () -> Unit) {
 
 @Composable
 private fun Tabs(selected: Int, onSelect: (Int) -> Unit) {
-    val items = listOf("☺" to tr("Expresiones", "Expressions"), "☰" to tr("Ajustes", "Settings"), "☆" to tr("Avanzado", "Advanced"))
+    val items = listOf("✦" to tr("Expresiones", "Expressions"), "☰" to tr("Ajustes", "Settings"), "☆" to tr("Avanzado", "Advanced"))
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Ui.Card)
             .border(BorderStroke(1.dp, Ui.CardBorder), RoundedCornerShape(18.dp)).padding(4.dp),
@@ -250,24 +252,43 @@ private fun LiveExpressions(ui: UiState, vm: TrackingViewModel) {
     val v = ui.vrm
     fun avg(a: String, c: String) = (b[ArKit.idx(a)] + b[ArKit.idx(c)]) / 2f
     val jaw = ArKit.JAW_OPEN
-    val rows1 = listOf(
-        tr("Sonrisa", "Smile") to maxOf(avg("mouthSmileLeft", "mouthSmileRight"), v[Vrm.JOY]),
-        tr("Enojo", "Anger") to maxOf(v[Vrm.ANGRY], avg("browDownLeft", "browDownRight") * 0.8f),
-        tr("Sorpresa", "Surprise") to maxOf(v[Vrm.SURPRISED], minOf(avg("eyeWideLeft", "eyeWideRight"), b[ArKit.BROW_INNER_UP])),
-        tr("Tristeza", "Sadness") to maxOf(v[Vrm.SORROW], minOf(b[ArKit.BROW_INNER_UP], avg("mouthFrownLeft", "mouthFrownRight") * 1.5f)),
-        tr("Miedo", "Fear") to ((b[ArKit.BROW_INNER_UP] + avg("eyeWideLeft", "eyeWideRight") + avg("mouthStretchLeft", "mouthStretchRight") * 2f) / 2.6f),
-        tr("Desagrado", "Disgust") to ((avg("noseSneerLeft", "noseSneerRight") + avg("mouthUpperUpLeft", "mouthUpperUpRight") * 1.5f) / 1.6f),
+    // Las 5 emociones básicas de VRM primero
+    val emotions = listOf(
+        tr("Alegría", "Joy") to maxOf(v[Vrm.JOY], avg("mouthSmileLeft", "mouthSmileRight")),
+        tr("Enojo", "Angry") to maxOf(v[Vrm.ANGRY], avg("browDownLeft", "browDownRight") * 0.8f),
+        tr("Tristeza", "Sorrow") to maxOf(v[Vrm.SORROW], minOf(b[ArKit.BROW_INNER_UP], avg("mouthFrownLeft", "mouthFrownRight") * 1.5f)),
+        tr("Diversión", "Fun") to v[Vrm.FUN],
+        tr("Sorpresa", "Surprised") to maxOf(v[Vrm.SURPRISED], minOf(avg("eyeWideLeft", "eyeWideRight"), b[ArKit.BROW_INNER_UP])),
     )
-    val rows2 = listOf(
+    val others = listOf(
+        tr("Parpadeo", "Blink") to avg("eyeBlinkLeft", "eyeBlinkRight"),
         tr("Boca abierta", "Mouth open") to b[jaw] / vm.outMax(jaw).coerceAtLeast(0.05f),
-        tr("Lengua", "Tongue") to b[ArKit.TONGUE_OUT],
-        tr("Ojos cerrados", "Eyes closed") to avg("eyeBlinkLeft", "eyeBlinkRight"),
         tr("Cachetes inflados", "Cheek puff") to b[ArKit.CHEEK_PUFF] / vm.outMax(ArKit.CHEEK_PUFF).coerceAtLeast(0.05f),
+        tr("Lengua", "Tongue") to b[ArKit.TONGUE_OUT],
     )
-    PurpleCard(tr("Expresiones en tiempo real", "Real-time expressions"), "☆") {
-        for ((label, value) in rows1) ExpressionRow(label, value)
+    PurpleCard(tr("Expresiones VRM en tiempo real", "Real-time VRM expressions"), "☆") {
+        for ((label, value) in emotions) ExpressionRow(label, value)
         Box(Modifier.fillMaxWidth().height(1.dp).background(Ui.CardBorder))
-        for ((label, value) in rows2) ExpressionRow(label, value)
+        // Vocales (A I U E O) en una sola fila
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (k in Vrm.A..Vrm.O) VowelChip(Vrm.LABELS[k], v[k], Modifier.weight(1f))
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Ui.CardBorder))
+        for ((label, value) in others) ExpressionRow(label, value)
+    }
+}
+
+@Composable
+private fun VowelChip(label: String, value: Float, modifier: Modifier) {
+    val a = value.coerceIn(0f, 1f)
+    Column(
+        modifier.clip(RoundedCornerShape(12.dp)).background(Ui.Track)
+            .border(BorderStroke(1.dp, Ui.Accent.copy(alpha = 0.2f + 0.8f * a)), RoundedCornerShape(12.dp))
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(label, color = Ui.Text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("%.0f%%".format(a * 100), color = Ui.Muted, fontSize = 11.sp)
     }
 }
 
@@ -347,8 +368,8 @@ private fun ConnectionCard(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(!s.vtsEnabled, {
                 vm.update { it.copy(ifmEnabled = true, vmcEnabled = true, vtsEnabled = false) }
-            }, { Text("VSeeFace · VNyan · Warudo") })
-            FilterChip(s.vtsEnabled, { vm.update { it.copy(vtsEnabled = true) } }, { Text("VTube Studio") })
+            }, { Text(tr("Avatar 3D (VRM)", "3D avatar (VRM)")) })
+            FilterChip(s.vtsEnabled, { vm.update { it.copy(vtsEnabled = true) } }, { Text(tr("Avatar 2D (Live2D)", "2D avatar (Live2D)")) })
         }
         Text(
             tr("IP de este teléfono", "This phone's IP") + ": " + ui.phoneIps.joinToString().ifEmpty { tr("sin Wi-Fi", "no Wi-Fi") },
@@ -357,17 +378,19 @@ private fun ConnectionCard(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
         if (!s.vtsEnabled) {
             Text(
                 tr(
-                    "En la PC elegí \"iFacialMocap\" y escribí esta IP. Para expresiones VRM, activá también el receptor VMC (puerto 39539).",
-                    "On the PC choose \"iFacialMocap\" and type this IP. For VRM expressions, also enable the VMC receiver (port 39539).",
+                    "En tu programa de avatar elegí el tracking facial por teléfono en red (puerto 49983) y escribí esta IP. " +
+                        "Para las expresiones VRM activá también la recepción por el puerto 39539.",
+                    "In your avatar app choose phone face tracking over the network (port 49983) and type this IP. " +
+                        "For VRM expressions also enable receiving on port 39539.",
                 ),
                 color = Ui.Muted, fontSize = 12.sp,
             )
         } else {
             Text(
-                tr("En VTube Studio activá la API (puerto 8001) y aceptá el aviso.", "In VTube Studio enable the API (port 8001) and accept the popup."),
+                tr("En tu programa Live2D activá la API de plugins (puerto 8001) y aceptá el aviso de MoonyFace.", "In your Live2D app enable the plugin API (port 8001) and accept the MoonyFace popup."),
                 color = Ui.Muted, fontSize = 12.sp,
             )
-            OutlinedButton({ vm.discoverVts() }) { Text(tr("Buscar VTube Studio", "Find VTube Studio")) }
+            OutlinedButton({ vm.discoverVts() }) { Text(tr("Buscar en la red", "Search the network")) }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(10.dp).clip(CircleShape).background(if (ui.connected) Ui.Good else Ui.Bad))
@@ -407,6 +430,13 @@ private fun AdvancedTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
                 ToggleRow(tr("Ver recorte de la lengua", "Show tongue debug crop"), s.showTongueDebug) { v -> vm.update { it.copy(showTongueDebug = v) } }
                 ui.tongueDebug?.let { Image(it, null, Modifier.size(110.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Fit) }
                 Text(tr("Señal de lengua: %.2f", "Tongue signal: %.2f").format(ui.tongueFeature), color = Ui.Muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                val d = ui.puffDiag
+                Text(
+                    tr("Cachetes → base %.2f · malla %.2f · surco %.2f · patrón %.2f · permitido %.2f",
+                        "Cheeks → base %.2f · mesh %.2f · fold %.2f · pattern %.2f · allowed %.2f")
+                        .format(d[0], d[1], d[2], d[3], d[4]),
+                    color = Ui.Muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                )
             }
         }
         item {
@@ -414,7 +444,7 @@ private fun AdvancedTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
                 Text(
                     tr("tracking %.0f fps · cámara %.0f fps · envío %.0f fps", "tracking %.0f fps · camera %.0f fps · send %.0f fps")
                         .format(ui.fps, ui.cameraFps, ui.sendFps) +
-                        "\nMediaPipe %.0f ms · %s %.0f ms · total %.0f ms".format(ui.detectMs, tr("lengua", "tongue"), ui.tongueMs, ui.processMs) +
+                        "\n%s %.0f ms · %s %.0f ms · total %.0f ms".format(tr("motor", "engine"), ui.detectMs, tr("lengua", "tongue"), ui.tongueMs, ui.processMs) +
                         "\n%s · %s".format(ui.accel, ui.exposure),
                     color = Ui.Muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
                 )
@@ -435,20 +465,20 @@ private fun AdvancedTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
         }
         item {
             PurpleCard(tr("Salidas", "Outputs")) {
-                ToggleRow("iFacialMocap", s.ifmEnabled) { v -> vm.update { it.copy(ifmEnabled = v) } }
+                ToggleRow(tr("Salida de rostro (puerto 49983)", "Face output (port 49983)"), s.ifmEnabled) { v -> vm.update { it.copy(ifmEnabled = v) } }
                 EditableField(tr("IP fija de la PC (opcional)", "Fixed PC IP (optional)"), s.ifmTargetIp) { v -> vm.update { it.copy(ifmTargetIp = v) } }
                 StatusText(ui.ifmStatus)
-                ToggleRow("VMC", s.vmcEnabled) { v -> vm.update { it.copy(vmcEnabled = v) } }
-                EditableField(tr("IP VMC (vacío = la de iFacialMocap)", "VMC IP (empty = the iFacialMocap one)"), s.vmcHost) { v -> vm.update { it.copy(vmcHost = v) } }
-                EditableField(tr("Puerto VMC", "VMC port"), s.vmcPort.toString(), numeric = true) { v ->
+                ToggleRow(tr("Salida de expresiones VRM", "VRM expressions output"), s.vmcEnabled) { v -> vm.update { it.copy(vmcEnabled = v) } }
+                EditableField(tr("IP de la PC (vacío = la misma que la salida de rostro)", "PC IP (empty = same as the face output)"), s.vmcHost) { v -> vm.update { it.copy(vmcHost = v) } }
+                EditableField(tr("Puerto de expresiones", "Expressions port"), s.vmcPort.toString(), numeric = true) { v ->
                     v.toIntOrNull()?.let { p -> vm.update { it.copy(vmcPort = p) } }
                 }
                 ToggleRow(tr("Nombres VRM 1.0", "VRM 1.0 names"), s.vmcVrm1) { v -> vm.update { it.copy(vmcVrm1 = v) } }
-                ToggleRow(tr("VMC: enviar también ARKit", "VMC: also send ARKit"), s.vmcArkit) { v -> vm.update { it.copy(vmcArkit = v) } }
-                ToggleRow(tr("VMC: cabeza y ojos (huesos)", "VMC: head and eyes (bones)"), s.vmcBones) { v -> vm.update { it.copy(vmcBones = v) } }
+                ToggleRow(tr("Enviar también los 52 gestos (perfect sync)", "Also send all 52 shapes (perfect sync)"), s.vmcArkit) { v -> vm.update { it.copy(vmcArkit = v) } }
+                ToggleRow(tr("Enviar cabeza y ojos (huesos)", "Send head and eyes (bones)"), s.vmcBones) { v -> vm.update { it.copy(vmcBones = v) } }
                 StatusText(ui.vmcStatus)
-                ToggleRow("VTube Studio", s.vtsEnabled) { v -> vm.update { it.copy(vtsEnabled = v) } }
-                EditableField(tr("IP de VTube Studio", "VTube Studio IP"), s.vtsHost) { v -> vm.update { it.copy(vtsHost = v) } }
+                ToggleRow(tr("Salida Live2D (API de plugins)", "Live2D output (plugin API)"), s.vtsEnabled) { v -> vm.update { it.copy(vtsEnabled = v) } }
+                EditableField(tr("IP de la PC con Live2D", "IP of the Live2D PC"), s.vtsHost) { v -> vm.update { it.copy(vtsHost = v) } }
                 EditableField(tr("Puerto API", "API port"), s.vtsPort.toString(), numeric = true) { v ->
                     v.toIntOrNull()?.let { p -> vm.update { it.copy(vtsPort = p) } }
                 }
@@ -471,7 +501,7 @@ private fun AdvancedTab(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
 // ======================================================================= barra inferior
 
 @Composable
-private fun BottomBar(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
+private fun BottomBar(ui: UiState, s: AppSettings, vm: TrackingViewModel, onCalibrate: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(84.dp).clip(RoundedCornerShape(22.dp)).background(Ui.Card)
             .border(BorderStroke(1.dp, Ui.CardBorder), RoundedCornerShape(22.dp)).padding(horizontal = 6.dp),
@@ -485,7 +515,7 @@ private fun BottomBar(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
                 Spacer(Modifier.width(4.dp))
                 Box(Modifier.size(7.dp).clip(CircleShape).background(if (ui.connected) Ui.Good else Ui.Bad))
             }
-            Text("MediaPipe", color = Ui.Muted, fontSize = 10.sp)
+            Text("MoonyFace", color = Ui.Muted, fontSize = 10.sp)
         }
         Divider()
         // Cámara
@@ -510,7 +540,27 @@ private fun BottomBar(ui: UiState, s: AppSettings, vm: TrackingViewModel) {
             Text(tr("Reiniciar", "Restart"), color = Ui.Text, fontSize = 12.sp)
         }
         Divider()
-        CatMascot(Modifier.weight(1.1f).fillMaxHeight(), ui.faceFound)
+        // Estrella: calibrar
+        Column(Modifier.weight(1f).clickable { onCalibrate() }, horizontalAlignment = Alignment.CenterHorizontally) {
+            StarIcon(Modifier.size(26.dp))
+            Text(tr("Calibrar", "Calibrate"), color = Ui.Text, fontSize = 12.sp)
+        }
+    }
+}
+
+/** Estrella de cuatro puntas (la del logo). */
+@Composable
+fun StarIcon(modifier: Modifier, color: Color = Ui.Accent) {
+    Canvas(modifier) {
+        val cx = size.width / 2f; val cy = size.height / 2f; val r = size.minDimension / 2f; val k = r * 0.14f
+        val p = Path()
+        p.moveTo(cx, cy - r)
+        p.cubicTo(cx + k, cy - k, cx + k, cy - k, cx + r, cy)
+        p.cubicTo(cx + k, cy + k, cx + k, cy + k, cx, cy + r)
+        p.cubicTo(cx - k, cy + k, cx - k, cy + k, cx - r, cy)
+        p.cubicTo(cx - k, cy - k, cx - k, cy - k, cx, cy - r)
+        p.close()
+        drawPath(p, color)
     }
 }
 
@@ -533,35 +583,6 @@ private fun PlayPauseIcon(paused: Boolean) {
             drawRoundRect(Ui.Text, topLeft = Offset(size.width * 0.6f, 0f), size = Size(w, size.height),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(3f))
         }
-    }
-}
-
-/** Gatito mascota (dibujo propio): duerme si no hay cara, abre los ojos cuando te ve. */
-@Composable
-private fun CatMascot(modifier: Modifier, awake: Boolean) {
-    Canvas(modifier.padding(6.dp)) {
-        val cx = size.width * 0.55f; val cy = size.height * 0.62f; val r = size.height * 0.30f
-        val body = Color(0xFF5B3FA8); val line = Color(0xFFD9CCFF)
-        // orejas
-        val ear = Path()
-        ear.moveTo(cx - r * 0.95f, cy - r * 0.35f); ear.lineTo(cx - r * 0.6f, cy - r * 1.35f); ear.lineTo(cx - r * 0.15f, cy - r * 0.8f); ear.close()
-        ear.moveTo(cx + r * 0.95f, cy - r * 0.35f); ear.lineTo(cx + r * 0.6f, cy - r * 1.35f); ear.lineTo(cx + r * 0.15f, cy - r * 0.8f); ear.close()
-        drawPath(ear, body)
-        drawCircle(body, r, Offset(cx, cy))
-        drawCircle(line, r, Offset(cx, cy), style = Stroke(1.5f))
-        // ojos
-        val ey = cy - r * 0.1f
-        for (sx in listOf(-0.38f, 0.38f)) {
-            val ex = cx + r * sx
-            if (awake) drawCircle(line, r * 0.12f, Offset(ex, ey))
-            else drawArc(line, 0f, 180f, false, topLeft = Offset(ex - r * 0.18f, ey - r * 0.1f),
-                size = Size(r * 0.36f, r * 0.2f), style = Stroke(2f))
-        }
-        // estrellitas
-        val star = Color(0xFFE8DDFF)
-        drawCircle(star, 2.5f, Offset(size.width * 0.12f, size.height * 0.25f))
-        drawCircle(star, 1.8f, Offset(size.width * 0.9f, size.height * 0.15f))
-        drawCircle(star, 2f, Offset(size.width * 0.18f, size.height * 0.8f))
     }
 }
 
@@ -733,7 +754,7 @@ private fun HelpDialog(onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
         confirmButton = { TextButton(onClose) { Text("OK") } },
-        title = { Text(tr("Cómo usar AvatarMocap", "How to use AvatarMocap")) },
+        title = { Text(tr("Cómo usar MoonyFace", "How to use MoonyFace")) },
         text = {
             Text(
                 tr(
